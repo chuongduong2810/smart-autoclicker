@@ -1,0 +1,481 @@
+@page "/execution"
+@using AutomationTool.Services
+@using AutomationTool.Models
+@using Microsoft.JSInterop
+@inject IScriptExecutionService ScriptExecution
+@inject IScriptStorageService ScriptStorage
+@inject IJSRuntime JSRuntime
+@implements IDisposable
+
+<PageTitle>Script Execution</PageTitle>
+
+<h1>⚡ Script Execution Monitor</h1>
+
+<div class="row">
+    <div class="col-md-8">
+        <!-- Active Executions -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Active Executions</h5>
+                
+                @if (executionStates.Any(e => e.Status == "RUNNING" || e.Status == "PAUSED"))
+                {
+                    @foreach (var state in executionStates.Where(e => e.Status == "RUNNING" || e.Status == "PAUSED"))
+                    {
+                        var script = scripts.FirstOrDefault(s => s.Id == state.ScriptId);
+                        
+                        <div class="card mb-3 border-start border-primary border-3">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="card-title mb-1">@(script?.Name ?? "Unknown Script")</h6>
+                                        <p class="card-text small text-muted mb-2">@(script?.Description ?? "")</p>
+                                        
+                                        <div class="small">
+                                            <span class="badge @GetStatusBadgeClass(state.Status)">@state.Status</span>
+                                            <span class="text-muted ms-2">
+                                                Started: @state.StartTime.ToString("HH:mm:ss")
+                                                | Running: @((DateTime.Now - state.StartTime).ToString(@"hh\:mm\:ss"))
+                                            </span>
+                                        </div>
+
+                                        @if (!string.IsNullOrEmpty(state.CurrentStepId) && script != null)
+                                        {
+                                            var currentStep = script.Steps.FirstOrDefault(s => s.Id == state.CurrentStepId);
+                                            if (currentStep != null)
+                                            {
+                                                <div class="mt-2">
+                                                    <small class="text-primary">
+                                                        Current Step: @currentStep.Name
+                                                    </small>
+                                                </div>
+                                            }
+                                        }
+                                    </div>
+                                    
+                                    <div class="btn-group" role="group">
+                                        @if (state.Status == "RUNNING")
+                                        {
+                                            <button class="btn btn-sm btn-outline-warning" @onclick="() => PauseScript(state.ScriptId)">
+                                                ⏸️ Pause
+                                            </button>
+                                        }
+                                        else if (state.Status == "PAUSED")
+                                        {
+                                            <button class="btn btn-sm btn-outline-success" @onclick="() => ResumeScript(state.ScriptId)">
+                                                ▶️ Resume
+                                            </button>
+                                        }
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => StopScript(state.ScriptId)">
+                                            ⏹️ Stop
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Progress Bar -->
+                                @if (script != null && script.Steps.Any())
+                                {
+                                    var currentStepIndex = script.Steps.FindIndex(s => s.Id == state.CurrentStepId);
+                                    var progress = currentStepIndex >= 0 ? (double)(currentStepIndex + 1) / script.Steps.Count * 100 : 0;
+                                    
+                                    <div class="progress mt-3" style="height: 6px;">
+                                        <div class="progress-bar" role="progressbar" style="width: @progress%" aria-valuenow="@progress" aria-valuemin="0" aria-valuemax="100"></div>
+                                    </div>
+                                    <small class="text-muted">Step @(currentStepIndex + 1) of @script.Steps.Count</small>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="text-center py-4">
+                        <div class="display-6 text-muted">⏸️</div>
+                        <p class="text-muted">No active script executions</p>
+                        <a href="/scripts" class="btn btn-primary">
+                            Run a Script
+                        </a>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Execution History -->
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="card-title mb-0">Execution History</h5>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="RefreshExecutions">
+                        🔄 Refresh
+                    </button>
+                </div>
+
+                @if (executionStates.Any())
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Script</th>
+                                    <th>Status</th>
+                                    <th>Started</th>
+                                    <th>Duration</th>
+                                    <th>Logs</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var state in executionStates.OrderByDescending(e => e.StartTime))
+                                {
+                                    var script = scripts.FirstOrDefault(s => s.Id == state.ScriptId);
+                                    var duration = state.Status == "RUNNING" 
+                                        ? DateTime.Now - state.StartTime 
+                                        : TimeSpan.FromMinutes(5); // Placeholder for completed scripts
+                                    
+                                    <tr>
+                                        <td>
+                                            <strong>@(script?.Name ?? "Unknown")</strong>
+                                            @if (script != null)
+                                            {
+                                                <br><small class="text-muted">@script.Description</small>
+                                            }
+                                        </td>
+                                        <td>
+                                            <span class="badge @GetStatusBadgeClass(state.Status)">@state.Status</span>
+                                        </td>
+                                        <td>@state.StartTime.ToString("MM/dd HH:mm:ss")</td>
+                                        <td>@duration.ToString(@"hh\:mm\:ss")</td>
+                                        <td>
+                                            <span class="badge bg-secondary">@state.Logs.Count</span>
+                                            @if (state.Logs.Any(l => l.Level == "ERROR"))
+                                            {
+                                                <span class="badge bg-danger ms-1">@state.Logs.Count(l => l.Level == "ERROR") errors</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-primary" @onclick="() => ViewLogs(state)">
+                                                📄 View Logs
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <div class="text-center py-4">
+                        <p class="text-muted">No execution history available</p>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        @if (selectedExecutionState != null)
+        {
+            <!-- Detailed Logs -->
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="card-title mb-0">Execution Logs</h5>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="ClearSelectedExecution">
+                            ❌ Close
+                        </button>
+                    </div>
+
+                    <div class="small mb-3">
+                        <strong>Script:</strong> @(scripts.FirstOrDefault(s => s.Id == selectedExecutionState.ScriptId)?.Name ?? "Unknown")<br>
+                        <strong>Status:</strong> <span class="badge @GetStatusBadgeClass(selectedExecutionState.Status)">@selectedExecutionState.Status</span><br>
+                        <strong>Started:</strong> @selectedExecutionState.StartTime.ToString("MM/dd/yyyy HH:mm:ss")
+                    </div>
+
+                    <div style="max-height: 500px; overflow-y: auto;" class="border rounded p-2 bg-light">
+                        @if (selectedExecutionState.Logs.Any())
+                        {
+                            @foreach (var log in selectedExecutionState.Logs.OrderByDescending(l => l.Timestamp))
+                            {
+                                <div class="mb-2 p-2 rounded @GetLogBackgroundClass(log.Level)">
+                                    <div class="d-flex justify-content-between">
+                                        <span class="badge @GetLogLevelClass(log.Level)">@log.Level</span>
+                                        <small class="text-muted">@log.Timestamp.ToString("HH:mm:ss.fff")</small>
+                                    </div>
+                                    <div class="mt-1 small">@log.Message</div>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <p class="text-muted text-center py-3">No logs available</p>
+                        }
+                    </div>
+
+                    <div class="mt-3">
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => DownloadLogs(selectedExecutionState)">
+                            💾 Download Logs
+                        </button>
+                    </div>
+                </div>
+            </div>
+        }
+        else
+        {
+            <!-- Quick Actions -->
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Quick Actions</h5>
+                    
+                    <div class="d-grid gap-2">
+                        <a href="/scripts" class="btn btn-primary">
+                            ➕ Run New Script
+                        </a>
+                        <button class="btn btn-outline-secondary" @onclick="StopAllScripts">
+                            ⏹️ Stop All Scripts
+                        </button>
+                        <button class="btn btn-outline-info" @onclick="RefreshExecutions">
+                            🔄 Refresh Status
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Statistics -->
+            <div class="card mt-3">
+                <div class="card-body">
+                    <h5 class="card-title">Execution Statistics</h5>
+                    
+                    <div class="row text-center">
+                        <div class="col-6">
+                            <div class="display-6 text-success">@executionStates.Count(e => e.Status == "COMPLETED")</div>
+                            <small>Completed</small>
+                        </div>
+                        <div class="col-6">
+                            <div class="display-6 text-danger">@executionStates.Count(e => e.Status == "ERROR")</div>
+                            <small>Failed</small>
+                        </div>
+                        <div class="col-6">
+                            <div class="display-6 text-primary">@executionStates.Count(e => e.Status == "RUNNING")</div>
+                            <small>Running</small>
+                        </div>
+                        <div class="col-6">
+                            <div class="display-6 text-warning">@executionStates.Count(e => e.Status == "PAUSED")</div>
+                            <small>Paused</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(statusMessage))
+        {
+            <div class="alert @statusClass alert-dismissible fade show mt-3" role="alert">
+                @statusMessage
+                <button type="button" class="btn-close" @onclick="ClearStatus"></button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<ScriptExecutionState> executionStates = new();
+    private List<AutomationScript> scripts = new();
+    private ScriptExecutionState? selectedExecutionState;
+    private System.Timers.Timer? refreshTimer;
+    private string statusMessage = string.Empty;
+    private string statusClass = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+        
+        // Set up auto-refresh timer
+        refreshTimer = new System.Timers.Timer(2000); // Refresh every 2 seconds
+        refreshTimer.Elapsed += async (sender, e) => await InvokeAsync(RefreshExecutions);
+        refreshTimer.Start();
+
+        // Subscribe to execution events
+        ScriptExecution.LogGenerated += OnLogGenerated;
+        ScriptExecution.StateChanged += OnStateChanged;
+    }
+
+    private async Task LoadData()
+    {
+        scripts = await ScriptStorage.GetAllScriptsAsync();
+        RefreshExecutions();
+    }
+
+    private void RefreshExecutions()
+    {
+        executionStates = ScriptExecution.GetAllExecutionStates();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task PauseScript(string scriptId)
+    {
+        try
+        {
+            await ScriptExecution.PauseScriptAsync(scriptId);
+            ShowStatus("Script paused", "alert-warning");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error pausing script: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private async Task ResumeScript(string scriptId)
+    {
+        try
+        {
+            await ScriptExecution.ResumeScriptAsync(scriptId);
+            ShowStatus("Script resumed", "alert-success");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error resuming script: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private async Task StopScript(string scriptId)
+    {
+        try
+        {
+            await ScriptExecution.StopScriptAsync(scriptId);
+            ShowStatus("Script stopped", "alert-info");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error stopping script: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private async Task StopAllScripts()
+    {
+        try
+        {
+            var runningScripts = executionStates.Where(e => e.Status == "RUNNING" || e.Status == "PAUSED").ToList();
+            
+            foreach (var state in runningScripts)
+            {
+                await ScriptExecution.StopScriptAsync(state.ScriptId);
+            }
+            
+            ShowStatus($"Stopped {runningScripts.Count} scripts", "alert-info");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error stopping scripts: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private void ViewLogs(ScriptExecutionState state)
+    {
+        selectedExecutionState = state;
+        ClearStatus();
+    }
+
+    private void ClearSelectedExecution()
+    {
+        selectedExecutionState = null;
+        ClearStatus();
+    }
+
+    private async Task DownloadLogs(ScriptExecutionState state)
+    {
+        try
+        {
+            var logContent = string.Join("\n", state.Logs.OrderBy(l => l.Timestamp)
+                .Select(l => $"[{l.Timestamp:yyyy-MM-dd HH:mm:ss.fff}] {l.Level}: {l.Message}"));
+            
+            var fileName = $"execution_logs_{state.ScriptId}_{DateTime.Now:yyyyMMddHHmmss}.txt";
+            var dataUri = $"data:text/plain;charset=utf-8,{Uri.EscapeDataString(logContent)}";
+            
+            await JSRuntime.InvokeVoidAsync("downloadFile", fileName, dataUri);
+            ShowStatus("Log download started", "alert-info");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error downloading logs: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private void OnLogGenerated(object? sender, ExecutionLog log)
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnStateChanged(object? sender, ScriptExecutionState state)
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private string GetStatusBadgeClass(string status)
+    {
+        return status.ToUpper() switch
+        {
+            "RUNNING" => "bg-success",
+            "PAUSED" => "bg-warning text-dark",
+            "STOPPED" => "bg-secondary",
+            "COMPLETED" => "bg-primary",
+            "ERROR" => "bg-danger",
+            _ => "bg-light text-dark"
+        };
+    }
+
+    private string GetLogLevelClass(string level)
+    {
+        return level.ToUpper() switch
+        {
+            "ERROR" => "bg-danger",
+            "WARNING" => "bg-warning text-dark",
+            "INFO" => "bg-info text-dark",
+            "DEBUG" => "bg-secondary",
+            _ => "bg-light text-dark"
+        };
+    }
+
+    private string GetLogBackgroundClass(string level)
+    {
+        return level.ToUpper() switch
+        {
+            "ERROR" => "bg-danger bg-opacity-10",
+            "WARNING" => "bg-warning bg-opacity-10",
+            _ => "bg-light"
+        };
+    }
+
+    private void ShowStatus(string message, string cssClass)
+    {
+        statusMessage = message;
+        statusClass = cssClass;
+        StateHasChanged();
+    }
+
+    private void ClearStatus()
+    {
+        statusMessage = string.Empty;
+        statusClass = string.Empty;
+    }
+
+    public void Dispose()
+    {
+        refreshTimer?.Stop();
+        refreshTimer?.Dispose();
+        
+        ScriptExecution.LogGenerated -= OnLogGenerated;
+        ScriptExecution.StateChanged -= OnStateChanged;
+    }
+}
+
+<script>
+    window.downloadFile = (filename, dataUrl) => {
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+</script>

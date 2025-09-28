@@ -1,0 +1,41 @@
+{
+  "Files": [
+    {
+      "Id": "/workspace/AutomationTool/obj/Debug/net8.0-windows/scopedcss/projectbundle/AutomationTool.bundle.scp.css",
+      "PackagePath": "staticwebassets/AutomationTool.bundle.scp.css"
+    },
+    {
+      "Id": "/workspace/AutomationTool/wwwroot/app.css",
+      "PackagePath": "staticwebassets/app.css"
+    },
+    {
+      "Id": "/workspace/AutomationTool/wwwroot/bootstrap/bootstrap.min.css",
+      "PackagePath": "staticwebassets/bootstrap/bootstrap.min.css"
+    },
+    {
+      "Id": "/workspace/AutomationTool/wwwroot/bootstrap/bootstrap.min.css.map",
+      "PackagePath": "staticwebassets/bootstrap/bootstrap.min.css.map"
+    },
+    {
+      "Id": "/workspace/AutomationTool/wwwroot/favicon.png",
+      "PackagePath": "staticwebassets/favicon.png"
+    },
+    {
+      "Id": "obj/Debug/net8.0-windows/staticwebassets/msbuild.AutomationTool.Microsoft.AspNetCore.StaticWebAssets.props",
+      "PackagePath": "build\\Microsoft.AspNetCore.StaticWebAssets.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0-windows/staticwebassets/msbuild.build.AutomationTool.props",
+      "PackagePath": "build\\AutomationTool.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0-windows/staticwebassets/msbuild.buildMultiTargeting.AutomationTool.props",
+      "PackagePath": "buildMultiTargeting\\AutomationTool.props"
+    },
+    {
+      "Id": "obj/Debug/net8.0-windows/staticwebassets/msbuild.buildTransitive.AutomationTool.props",
+      "PackagePath": "buildTransitive\\AutomationTool.props"
+    }
+  ],
+  "ElementsToRemove": []
+}

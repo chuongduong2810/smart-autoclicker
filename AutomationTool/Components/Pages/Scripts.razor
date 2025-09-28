@@ -1,0 +1,595 @@
+@page "/scripts"
+@using AutomationTool.Services
+@using AutomationTool.Models
+@inject IScriptStorageService ScriptStorage
+@inject IScriptExecutionService ScriptExecution
+@inject NavigationManager Navigation
+
+<PageTitle>Script Management</PageTitle>
+
+<h1>📝 Script Management</h1>
+
+<div class="row">
+    <div class="col-md-8">
+        @if (selectedScript == null)
+        {
+            <!-- Script List View -->
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="card-title mb-0">Available Scripts</h5>
+                        <button class="btn btn-primary" @onclick="CreateNewScript">
+                            ➕ New Script
+                        </button>
+                    </div>
+
+                    @if (scripts.Any())
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Description</th>
+                                        <th>Steps</th>
+                                        <th>Modified</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var script in scripts)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <strong>@script.Name</strong>
+                                                @if (script.IsActive)
+                                                {
+                                                    <span class="badge bg-success ms-2">Active</span>
+                                                }
+                                            </td>
+                                            <td>@script.Description</td>
+                                            <td>
+                                                <span class="badge bg-primary">@script.Steps.Count</span>
+                                            </td>
+                                            <td>@script.ModifiedAt.ToString("MM/dd/yyyy HH:mm")</td>
+                                            <td>
+                                                <div class="btn-group" role="group">
+                                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => EditScript(script)">
+                                                        ✏️ Edit
+                                                    </button>
+                                                    <button class="btn btn-sm btn-outline-success" @onclick="() => RunScript(script.Id)">
+                                                        ▶️ Run
+                                                    </button>
+                                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteScript(script.Id)">
+                                                        🗑️ Delete
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="text-center py-5">
+                            <div class="display-1">📝</div>
+                            <h5>No Scripts Available</h5>
+                            <p class="text-muted">Create your first automation script to get started.</p>
+                            <button class="btn btn-primary" @onclick="CreateNewScript">
+                                Create First Script
+                            </button>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+        else
+        {
+            <!-- Script Editor View -->
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="card-title mb-0">
+                            @(isEditing ? "Edit Script" : "Create New Script")
+                        </h5>
+                        <div>
+                            <button class="btn btn-outline-secondary me-2" @onclick="CancelEdit">
+                                ❌ Cancel
+                            </button>
+                            <button class="btn btn-primary" @onclick="SaveScript" disabled="@isSaving">
+                                @if (isSaving)
+                                {
+                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                    <text> Saving...</text>
+                                }
+                                else
+                                {
+                                    <text>💾 Save Script</text>
+                                }
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Script Basic Information -->
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <label class="form-label">Script Name *</label>
+                            <input type="text" class="form-control" @bind="selectedScript.Name" placeholder="Enter script name">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Description</label>
+                            <input type="text" class="form-control" @bind="selectedScript.Description" placeholder="Brief description">
+                        </div>
+                    </div>
+
+                    <!-- Steps Section -->
+                    <div class="mb-4">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h6>Script Steps</h6>
+                            <button class="btn btn-sm btn-outline-primary" @onclick="AddStep">
+                                ➕ Add Step
+                            </button>
+                        </div>
+
+                        @if (selectedScript.Steps.Any())
+                        {
+                            @for (int i = 0; i < selectedScript.Steps.Count; i++)
+                            {
+                                var step = selectedScript.Steps[i];
+                                var stepIndex = i;
+                                
+                                <div class="card mb-3 border-start border-primary border-3">
+                                    <div class="card-body">
+                                        <div class="row">
+                                            <div class="col-md-8">
+                                                <div class="row">
+                                                    <div class="col-md-6">
+                                                        <label class="form-label">Step Name</label>
+                                                        <input type="text" class="form-control form-control-sm" @bind="step.Name" placeholder="Step name">
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <label class="form-label">Type</label>
+                                                        <select class="form-select form-select-sm" @bind="step.Type">
+                                                            <option value="condition">Condition</option>
+                                                            <option value="action">Action</option>
+                                                            <option value="wait">Wait</option>
+                                                            <option value="jump">Jump</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                
+                                                @if (step.Type == "action")
+                                                {
+                                                    <div class="mt-2">
+                                                        <label class="form-label">Actions</label>
+                                                        <div class="border rounded p-2 bg-light">
+                                                            @if (step.Actions.Any())
+                                                            {
+                                                                @foreach (var action in step.Actions)
+                                                                {
+                                                                    <div class="d-flex align-items-center mb-2">
+                                                                        <select class="form-select form-select-sm me-2" style="width: auto;" @bind="action.Type">
+                                                                            <option value="click">Click</option>
+                                                                            <option value="double_click">Double Click</option>
+                                                                            <option value="right_click">Right Click</option>
+                                                                            <option value="type">Type Text</option>
+                                                                            <option value="key_press">Key Press</option>
+                                                                            <option value="wait">Wait</option>
+                                                                            <option value="screenshot">Screenshot</option>
+                                                                        </select>
+                                                                        
+                                                                        @if (action.Type == "click" || action.Type == "double_click" || action.Type == "right_click")
+                                                                        {
+                                                                            <input type="number" class="form-control form-control-sm me-1" style="width: 80px;" 
+                                                                                   placeholder="X" @onchange="(e) => UpdateActionParameterX(action, e.Value)">
+                                                                            <input type="number" class="form-control form-control-sm me-2" style="width: 80px;" 
+                                                                                   placeholder="Y" @onchange="(e) => UpdateActionParameterY(action, e.Value)">
+                                                                        }
+                                                                        else if (action.Type == "type")
+                                                                        {
+                                                                            <input type="text" class="form-control form-control-sm me-2" 
+                                                                                   placeholder="Text to type" @onchange="(e) => UpdateActionParameterText(action, e.Value)">
+                                                                        }
+                                                                        else if (action.Type == "key_press")
+                                                                        {
+                                                                            <input type="text" class="form-control form-control-sm me-2" 
+                                                                                   placeholder="Keys (e.g., CTRL+C)" @onchange="(e) => UpdateActionParameterKeys(action, e.Value)">
+                                                                        }
+                                                                        else if (action.Type == "wait")
+                                                                        {
+                                                                            <input type="number" class="form-control form-control-sm me-2" style="width: 100px;" 
+                                                                                   placeholder="ms" @onchange="(e) => UpdateActionParameterMs(action, e.Value)">
+                                                                        }
+                                                                        
+                                                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveAction(step, action)">
+                                                                            🗑️
+                                                                        </button>
+                                                                    </div>
+                                                                }
+                                                            }
+                                                            <button class="btn btn-sm btn-outline-primary" @onclick="() => AddAction(step)">
+                                                                ➕ Add Action
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                }
+                                            </div>
+                                            
+                                            <div class="col-md-4">
+                                                <div class="d-flex justify-content-end align-items-start">
+                                                    <div class="btn-group-vertical" role="group">
+                                                        @if (stepIndex > 0)
+                                                        {
+                                                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => MoveStepUp(stepIndex)">
+                                                                ⬆️
+                                                            </button>
+                                                        }
+                                                        @if (stepIndex < selectedScript.Steps.Count - 1)
+                                                        {
+                                                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => MoveStepDown(stepIndex)">
+                                                                ⬇️
+                                                            </button>
+                                                        }
+                                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveStep(stepIndex)">
+                                                            🗑️
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <div class="text-center py-4 border rounded bg-light">
+                                <p class="text-muted mb-2">No steps added yet</p>
+                                <button class="btn btn-sm btn-primary" @onclick="AddStep">
+                                    Add First Step
+                                </button>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Script Templates</h5>
+                <p class="small text-muted">Quick start with pre-built script templates</p>
+                
+                <div class="d-grid gap-2">
+                    <button class="btn btn-outline-primary btn-sm" @onclick="CreateClickWaitTemplate">
+                        🖱️ Click & Wait
+                    </button>
+                    <button class="btn btn-outline-primary btn-sm" @onclick="CreateImageSearchTemplate">
+                        🔍 Image Search
+                    </button>
+                    <button class="btn btn-outline-primary btn-sm" @onclick="CreateFormFillTemplate">
+                        📝 Form Filling
+                    </button>
+                    <button class="btn btn-outline-primary btn-sm" @onclick="CreateAutomationLoopTemplate">
+                        🔄 Automation Loop
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        @if (selectedScript != null)
+        {
+            <div class="card mt-3">
+                <div class="card-body">
+                    <h5 class="card-title">Script Preview</h5>
+                    <div class="small">
+                        <strong>Name:</strong> @(string.IsNullOrEmpty(selectedScript.Name) ? "Untitled Script" : selectedScript.Name)<br>
+                        <strong>Steps:</strong> @selectedScript.Steps.Count<br>
+                        <strong>Actions:</strong> @selectedScript.Steps.SelectMany(s => s.Actions).Count()<br>
+                        <strong>Modified:</strong> @selectedScript.ModifiedAt.ToString("MM/dd/yyyy HH:mm")
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(statusMessage))
+        {
+            <div class="alert @statusClass alert-dismissible fade show mt-3" role="alert">
+                @statusMessage
+                <button type="button" class="btn-close" @onclick="ClearStatus"></button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<AutomationScript> scripts = new();
+    private AutomationScript? selectedScript;
+    private bool isEditing = false;
+    private bool isSaving = false;
+    private string statusMessage = string.Empty;
+    private string statusClass = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadScripts();
+    }
+
+    private async Task LoadScripts()
+    {
+        scripts = await ScriptStorage.GetAllScriptsAsync();
+        StateHasChanged();
+    }
+
+    private void CreateNewScript()
+    {
+        selectedScript = new AutomationScript
+        {
+            Name = "New Script",
+            Description = "Enter script description",
+            Steps = new List<ScriptStep>()
+        };
+        isEditing = false;
+    }
+
+    private void EditScript(AutomationScript script)
+    {
+        selectedScript = script;
+        isEditing = true;
+    }
+
+    private void CancelEdit()
+    {
+        selectedScript = null;
+        isEditing = false;
+        ClearStatus();
+    }
+
+    private async Task SaveScript()
+    {
+        if (selectedScript == null || string.IsNullOrWhiteSpace(selectedScript.Name))
+        {
+            ShowStatus("Please enter a script name.", "alert-warning");
+            return;
+        }
+
+        try
+        {
+            isSaving = true;
+            ClearStatus();
+
+            // Update step orders
+            for (int i = 0; i < selectedScript.Steps.Count; i++)
+            {
+                selectedScript.Steps[i].Order = i + 1;
+            }
+
+            await ScriptStorage.SaveScriptAsync(selectedScript);
+            await LoadScripts();
+            
+            ShowStatus($"Script '{selectedScript.Name}' saved successfully!", "alert-success");
+            selectedScript = null;
+            isEditing = false;
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error saving script: {ex.Message}", "alert-danger");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task DeleteScript(string scriptId)
+    {
+        try
+        {
+            await ScriptStorage.DeleteScriptAsync(scriptId);
+            await LoadScripts();
+            ShowStatus("Script deleted successfully!", "alert-success");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error deleting script: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private async Task RunScript(string scriptId)
+    {
+        try
+        {
+            await ScriptExecution.StartScriptAsync(scriptId);
+            ShowStatus("Script execution started!", "alert-success");
+            Navigation.NavigateTo("/execution");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error starting script: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private void AddStep()
+    {
+        if (selectedScript == null) return;
+
+        var newStep = new ScriptStep
+        {
+            Name = $"Step {selectedScript.Steps.Count + 1}",
+            Type = "action",
+            Order = selectedScript.Steps.Count + 1,
+            Actions = new List<ScriptAction>()
+        };
+
+        selectedScript.Steps.Add(newStep);
+    }
+
+    private void RemoveStep(int index)
+    {
+        if (selectedScript?.Steps != null && index >= 0 && index < selectedScript.Steps.Count)
+        {
+            selectedScript.Steps.RemoveAt(index);
+        }
+    }
+
+    private void MoveStepUp(int index)
+    {
+        if (selectedScript?.Steps != null && index > 0)
+        {
+            var step = selectedScript.Steps[index];
+            selectedScript.Steps.RemoveAt(index);
+            selectedScript.Steps.Insert(index - 1, step);
+        }
+    }
+
+    private void MoveStepDown(int index)
+    {
+        if (selectedScript?.Steps != null && index < selectedScript.Steps.Count - 1)
+        {
+            var step = selectedScript.Steps[index];
+            selectedScript.Steps.RemoveAt(index);
+            selectedScript.Steps.Insert(index + 1, step);
+        }
+    }
+
+    private void AddAction(ScriptStep step)
+    {
+        var newAction = new ScriptAction
+        {
+            Type = "click",
+            Parameters = new Dictionary<string, object>()
+        };
+        
+        step.Actions.Add(newAction);
+    }
+
+    private void RemoveAction(ScriptStep step, ScriptAction action)
+    {
+        step.Actions.Remove(action);
+    }
+
+    private void UpdateActionParameter(ScriptAction action, string key, object? value)
+    {
+        if (value != null)
+        {
+            action.Parameters[key] = value;
+        }
+    }
+
+    private void UpdateActionParameterX(ScriptAction action, object? value)
+    {
+        UpdateActionParameter(action, "x", value);
+    }
+
+    private void UpdateActionParameterY(ScriptAction action, object? value)
+    {
+        UpdateActionParameter(action, "y", value);
+    }
+
+    private void UpdateActionParameterText(ScriptAction action, object? value)
+    {
+        UpdateActionParameter(action, "text", value);
+    }
+
+    private void UpdateActionParameterKeys(ScriptAction action, object? value)
+    {
+        UpdateActionParameter(action, "keys", value);
+    }
+
+    private void UpdateActionParameterMs(ScriptAction action, object? value)
+    {
+        UpdateActionParameter(action, "milliseconds", value);
+    }
+
+    private void CreateFromTemplate(string templateType)
+    {
+        selectedScript = CreateScriptTemplate(templateType);
+        isEditing = false;
+    }
+
+    private void CreateClickWaitTemplate()
+    {
+        CreateFromTemplate("click-wait");
+    }
+
+    private void CreateImageSearchTemplate()
+    {
+        CreateFromTemplate("image-search");
+    }
+
+    private void CreateFormFillTemplate()
+    {
+        CreateFromTemplate("form-fill");
+    }
+
+    private void CreateAutomationLoopTemplate()
+    {
+        CreateFromTemplate("automation-loop");
+    }
+
+    private AutomationScript CreateScriptTemplate(string templateType)
+    {
+        return templateType switch
+        {
+            "click-wait" => new AutomationScript
+            {
+                Name = "Click & Wait Template",
+                Description = "Click at a position and wait",
+                Steps = new List<ScriptStep>
+                {
+                    new ScriptStep
+                    {
+                        Name = "Click at position",
+                        Type = "action",
+                        Order = 1,
+                        Actions = new List<ScriptAction>
+                        {
+                            new ScriptAction
+                            {
+                                Type = "click",
+                                Parameters = new Dictionary<string, object> { {"x", 500}, {"y", 300} }
+                            }
+                        }
+                    },
+                    new ScriptStep
+                    {
+                        Name = "Wait 2 seconds",
+                        Type = "action",
+                        Order = 2,
+                        Actions = new List<ScriptAction>
+                        {
+                            new ScriptAction
+                            {
+                                Type = "wait",
+                                Parameters = new Dictionary<string, object> { {"milliseconds", 2000} }
+                            }
+                        }
+                    }
+                }
+            },
+            _ => new AutomationScript
+            {
+                Name = "Custom Script",
+                Description = "Custom automation script",
+                Steps = new List<ScriptStep>()
+            }
+        };
+    }
+
+    private void ShowStatus(string message, string cssClass)
+    {
+        statusMessage = message;
+        statusClass = cssClass;
+        StateHasChanged();
+    }
+
+    private void ClearStatus()
+    {
+        statusMessage = string.Empty;
+        statusClass = string.Empty;
+    }
+}
