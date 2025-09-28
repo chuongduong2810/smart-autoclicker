@@ -1,0 +1,345 @@
+@page "/templates"
+@using AutomationTool.Services
+@using AutomationTool.Models
+@inject IScriptStorageService ScriptStorage
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Template Images</PageTitle>
+
+<h1>🖼️ Template Images</h1>
+
+<div class="row">
+    <div class="col-md-9">
+        @if (templates.Any())
+        {
+            <div class="row">
+                @foreach (var template in templates)
+                {
+                    <div class="col-md-4 mb-4">
+                        <div class="card h-100">
+                            @if (template.ImageData != null && template.ImageData.Length > 0)
+                            {
+                                <img src="data:image/png;base64,@Convert.ToBase64String(template.ImageData)" 
+                                     class="card-img-top" 
+                                     alt="@template.Name"
+                                     style="height: 200px; object-fit: contain; background-color: #f8f9fa;">
+                            }
+                            else
+                            {
+                                <div class="card-img-top d-flex align-items-center justify-content-center bg-light" style="height: 200px;">
+                                    <span class="text-muted">No Image</span>
+                                </div>
+                            }
+                            
+                            <div class="card-body">
+                                <h6 class="card-title">@template.Name</h6>
+                                <div class="small text-muted">
+                                    <div><strong>Size:</strong> @template.CaptureRegion.Width x @template.CaptureRegion.Height</div>
+                                    <div><strong>Position:</strong> (@template.CaptureRegion.X, @template.CaptureRegion.Y)</div>
+                                    <div><strong>Threshold:</strong> @(template.MatchThreshold * 100)%</div>
+                                    <div><strong>Created:</strong> @template.CreatedAt.ToString("MM/dd/yyyy")</div>
+                                </div>
+                            </div>
+                            
+                            <div class="card-footer">
+                                <div class="btn-group w-100" role="group">
+                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => EditTemplate(template)">
+                                        ✏️ Edit
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => TestTemplate(template)">
+                                        🔍 Test
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteTemplate(template.Id)">
+                                        🗑️ Delete
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <!-- Pagination could be added here for large numbers of templates -->
+        }
+        else
+        {
+            <div class="text-center py-5">
+                <div class="display-1">🖼️</div>
+                <h5>No Template Images</h5>
+                <p class="text-muted">Template images are created from the Screenshot page by entering a name and clicking "Save as Template".</p>
+                <a href="/screenshot" class="btn btn-primary">
+                    📷 Go to Screenshot Page
+                </a>
+            </div>
+        }
+    </div>
+
+    <div class="col-md-3">
+        @if (selectedTemplate != null)
+        {
+            <!-- Template Editor -->
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Edit Template</h5>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Template Name</label>
+                        <input type="text" class="form-control" @bind="selectedTemplate.Name">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Match Threshold</label>
+                        <div class="input-group">
+                            <input type="range" class="form-range" min="0.1" max="1.0" step="0.05" @bind="selectedTemplate.MatchThreshold">
+                            <span class="input-group-text">@((selectedTemplate.MatchThreshold * 100).ToString("F0"))%</span>
+                        </div>
+                        <div class="form-text">Higher values require more exact matches</div>
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-primary" @onclick="SaveTemplate" disabled="@isSaving">
+                            @if (isSaving)
+                            {
+                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                                <text> Saving...</text>
+                            }
+                            else
+                            {
+                                <text>💾 Save Changes</text>
+                            }
+                        </button>
+                        <button class="btn btn-outline-secondary" @onclick="CancelEdit">
+                            ❌ Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        }
+        else if (testResult != null)
+        {
+            <!-- Test Results -->
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Test Results</h5>
+                    
+                    <div class="mb-3">
+                        <div class="d-flex align-items-center">
+                            @if (testResult.Found)
+                            {
+                                <span class="badge bg-success me-2">✅ Found</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-danger me-2">❌ Not Found</span>
+                            }
+                        </div>
+                    </div>
+
+                    @if (testResult.Found)
+                    {
+                        <div class="small">
+                            <div><strong>Confidence:</strong> @((testResult.Confidence * 100).ToString("F1"))%</div>
+                            <div><strong>Location:</strong> (@testResult.Location.X, @testResult.Location.Y)</div>
+                            <div><strong>Search Time:</strong> @testResult.SearchTime.TotalMilliseconds ms</div>
+                        </div>
+                    }
+
+                    <div class="mt-3">
+                        <div class="form-text">Search Time: @testResult.SearchTime.TotalMilliseconds ms</div>
+                    </div>
+
+                    <button class="btn btn-outline-secondary mt-3" @onclick="ClearTestResult">
+                        Clear Results
+                    </button>
+                </div>
+            </div>
+        }
+        else
+        {
+            <!-- Info Panel -->
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Template Management</h5>
+                    <p class="small text-muted">
+                        Template images are used for image recognition in your automation scripts. 
+                        They represent UI elements that your scripts should find and interact with.
+                    </p>
+                    
+                    <h6>Tips:</h6>
+                    <ul class="small">
+                        <li>Use descriptive names for your templates</li>
+                        <li>Capture clear, unique UI elements</li>
+                        <li>Adjust match threshold based on your needs</li>
+                        <li>Test templates regularly to ensure they work</li>
+                    </ul>
+
+                    <div class="mt-3">
+                        <strong>Total Templates:</strong> @templates.Count<br>
+                        <strong>Total Size:</strong> @(templates.Sum(t => t.ImageData?.Length ?? 0) / 1024) KB
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(statusMessage))
+        {
+            <div class="alert @statusClass alert-dismissible fade show mt-3" role="alert">
+                @statusMessage
+                <button type="button" class="btn-close" @onclick="ClearStatus"></button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<TemplateImage> templates = new();
+    private TemplateImage? selectedTemplate;
+    private MatchResult? testResult;
+    private bool isSaving = false;
+    private bool isTesting = false;
+    private string statusMessage = string.Empty;
+    private string statusClass = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTemplates();
+    }
+
+    private async Task LoadTemplates()
+    {
+        try
+        {
+            templates = await ScriptStorage.GetAllTemplateImagesAsync();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error loading templates: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private void EditTemplate(TemplateImage template)
+    {
+        selectedTemplate = template;
+        testResult = null;
+        ClearStatus();
+    }
+
+    private void CancelEdit()
+    {
+        selectedTemplate = null;
+        ClearStatus();
+    }
+
+    private async Task SaveTemplate()
+    {
+        if (selectedTemplate == null || string.IsNullOrWhiteSpace(selectedTemplate.Name))
+        {
+            ShowStatus("Please enter a template name.", "alert-warning");
+            return;
+        }
+
+        try
+        {
+            isSaving = true;
+            ClearStatus();
+
+            await ScriptStorage.SaveTemplateImageAsync(selectedTemplate);
+            await LoadTemplates();
+            
+            ShowStatus($"Template '{selectedTemplate.Name}' saved successfully!", "alert-success");
+            selectedTemplate = null;
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error saving template: {ex.Message}", "alert-danger");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task DeleteTemplate(string templateId)
+    {
+        try
+        {
+            await ScriptStorage.DeleteTemplateImageAsync(templateId);
+            await LoadTemplates();
+            
+            ShowStatus("Template deleted successfully!", "alert-success");
+            
+            // Clear selection if the deleted template was selected
+            if (selectedTemplate?.Id == templateId)
+            {
+                selectedTemplate = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error deleting template: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private async Task TestTemplate(TemplateImage template)
+    {
+        try
+        {
+            isTesting = true;
+            selectedTemplate = null;
+            testResult = null;
+            ClearStatus();
+            StateHasChanged();
+
+            // This would require access to the screenshot and image recognition services
+            // For now, we'll simulate a test result
+            await Task.Delay(1000); // Simulate processing time
+
+            // In a real implementation, you would:
+            // 1. Take a current screenshot
+            // 2. Use image recognition service to find the template
+            // 3. Display the results
+            
+            testResult = new MatchResult
+            {
+                Found = Random.Shared.NextDouble() > 0.5, // Simulate random result
+                Confidence = Random.Shared.NextDouble(),
+                Location = new System.Drawing.Point(
+                    Random.Shared.Next(0, 1920),
+                    Random.Shared.Next(0, 1080)
+                ),
+                SearchTime = TimeSpan.FromMilliseconds(Random.Shared.Next(50, 500))
+            };
+
+            ShowStatus($"Template test completed in {testResult.SearchTime.TotalMilliseconds:F0}ms", "alert-info");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error testing template: {ex.Message}", "alert-danger");
+        }
+        finally
+        {
+            isTesting = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ClearTestResult()
+    {
+        testResult = null;
+        ClearStatus();
+    }
+
+    private void ShowStatus(string message, string cssClass)
+    {
+        statusMessage = message;
+        statusClass = cssClass;
+        StateHasChanged();
+    }
+
+    private void ClearStatus()
+    {
+        statusMessage = string.Empty;
+        statusClass = string.Empty;
+    }
+}

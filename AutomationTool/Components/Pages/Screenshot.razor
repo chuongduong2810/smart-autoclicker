@@ -1,0 +1,334 @@
+@page "/screenshot"
+@using AutomationTool.Services
+@using AutomationTool.Models
+@inject IScreenshotService ScreenshotService
+@inject IScriptStorageService ScriptStorage
+@inject IJSRuntime JSRuntime
+
+<PageTitle>Screenshot Capture</PageTitle>
+
+<h1>📸 Screenshot Capture</h1>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Capture Options</h5>
+                
+                <div class="mb-3">
+                    <label class="form-label">Capture Mode</label>
+                    <div class="btn-group" role="group">
+                        <input type="radio" class="btn-check" name="captureMode" id="fullScreen" checked @onchange="() => SetCaptureMode(CaptureMode.FullScreen)">
+                        <label class="btn btn-outline-primary" for="fullScreen">Full Screen</label>
+
+                        <input type="radio" class="btn-check" name="captureMode" id="region" @onchange="() => SetCaptureMode(CaptureMode.Region)">
+                        <label class="btn btn-outline-primary" for="region">Select Region</label>
+                    </div>
+                </div>
+
+                @if (currentMode == CaptureMode.Region)
+                {
+                    <div class="row mb-3">
+                        <div class="col-md-3">
+                            <label class="form-label">X</label>
+                            <input type="number" class="form-control" @bind="regionX" min="0">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Y</label>
+                            <input type="number" class="form-control" @bind="regionY" min="0">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Width</label>
+                            <input type="number" class="form-control" @bind="regionWidth" min="1">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Height</label>
+                            <input type="number" class="form-control" @bind="regionHeight" min="1">
+                        </div>
+                    </div>
+                }
+
+                <div class="mb-3">
+                    <label class="form-label">Template Name (Optional)</label>
+                    <input type="text" class="form-control" @bind="templateName" placeholder="Enter name to save as template">
+                </div>
+
+                <div class="d-grid gap-2 d-md-flex">
+                    <button class="btn btn-primary" @onclick="CaptureScreenshot" disabled="@isCapturing">
+                        @if (isCapturing)
+                        {
+                            <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                            <text> Capturing...</text>
+                        }
+                        else
+                        {
+                            <text>📷 Capture Screenshot</text>
+                        }
+                    </button>
+                    
+                    @if (!string.IsNullOrEmpty(templateName) && capturedImageData != null)
+                    {
+                        <button class="btn btn-success" @onclick="SaveAsTemplate" disabled="@isSaving">
+                            @if (isSaving)
+                            {
+                                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                                <text> Saving...</text>
+                            }
+                            else
+                            {
+                                <text>💾 Save as Template</text>
+                            }
+                        </button>
+                    }
+                </div>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrEmpty(statusMessage))
+        {
+            <div class="alert @statusClass alert-dismissible fade show mt-3" role="alert">
+                @statusMessage
+                <button type="button" class="btn-close" @onclick="ClearStatus"></button>
+            </div>
+        }
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Screen Information</h5>
+                <p><strong>Screen Resolution:</strong> @screenBounds.Width x @screenBounds.Height</p>
+                
+                @if (currentMode == CaptureMode.Region)
+                {
+                    <p><strong>Capture Region:</strong> @regionWidth x @regionHeight</p>
+                    <p><strong>Position:</strong> (@regionX, @regionY)</p>
+                }
+                
+                @if (capturedImageData != null)
+                {
+                    <p><strong>Last Capture:</strong> @lastCaptureTime.ToString("yyyy-MM-dd HH:mm:ss")</p>
+                    <p><strong>Image Size:</strong> @(capturedImageData.Length / 1024) KB</p>
+                }
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-body">
+                <h5 class="card-title">Quick Actions</h5>
+                <div class="d-grid gap-2">
+                    <button class="btn btn-outline-secondary" @onclick="SetCommonRegion" data-region="center">
+                        📍 Center (800x600)
+                    </button>
+                    <button class="btn btn-outline-secondary" @onclick="SetTopLeftRegion">
+                        📍 Top Left (400x300)
+                    </button>
+                    <button class="btn btn-outline-secondary" @onclick="SetBottomRightRegion">
+                        📍 Bottom Right (400x300)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (capturedImageData != null)
+{
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Captured Image Preview</h5>
+                    <div class="text-center">
+                        <img src="data:image/png;base64,@Convert.ToBase64String(capturedImageData)" 
+                             alt="Captured screenshot" 
+                             class="img-fluid" 
+                             style="max-height: 400px; border: 1px solid #dee2e6; border-radius: 0.375rem;">
+                    </div>
+                    
+                    <div class="mt-3 text-center">
+                        <button class="btn btn-outline-primary" @onclick="DownloadImage">
+                            💾 Download Image
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private enum CaptureMode
+    {
+        FullScreen,
+        Region
+    }
+
+    private CaptureMode currentMode = CaptureMode.FullScreen;
+    private int regionX = 0;
+    private int regionY = 0;
+    private int regionWidth = 800;
+    private int regionHeight = 600;
+    private string templateName = string.Empty;
+    private byte[]? capturedImageData;
+    private DateTime lastCaptureTime;
+    private System.Drawing.Rectangle screenBounds;
+    private bool isCapturing = false;
+    private bool isSaving = false;
+    private string statusMessage = string.Empty;
+    private string statusClass = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        screenBounds = ScreenshotService.GetScreenBounds();
+        
+        // Set default region to center of screen
+        regionX = (screenBounds.Width - regionWidth) / 2;
+        regionY = (screenBounds.Height - regionHeight) / 2;
+    }
+
+    private void SetCaptureMode(CaptureMode mode)
+    {
+        currentMode = mode;
+        StateHasChanged();
+    }
+
+    private async Task CaptureScreenshot()
+    {
+        try
+        {
+            isCapturing = true;
+            ClearStatus();
+            StateHasChanged();
+
+            if (currentMode == CaptureMode.FullScreen)
+            {
+                capturedImageData = await ScreenshotService.CaptureFullScreenAsync();
+                ShowStatus("Full screen captured successfully!", "alert-success");
+            }
+            else
+            {
+                capturedImageData = await ScreenshotService.CaptureRegionAsync(regionX, regionY, regionWidth, regionHeight);
+                ShowStatus($"Region ({regionX}, {regionY}, {regionWidth}x{regionHeight}) captured successfully!", "alert-success");
+            }
+
+            lastCaptureTime = DateTime.Now;
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error capturing screenshot: {ex.Message}", "alert-danger");
+        }
+        finally
+        {
+            isCapturing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveAsTemplate()
+    {
+        if (capturedImageData == null || string.IsNullOrWhiteSpace(templateName))
+            return;
+
+        try
+        {
+            isSaving = true;
+            ClearStatus();
+            StateHasChanged();
+
+            var region = currentMode == CaptureMode.FullScreen 
+                ? new ScreenRegion { X = 0, Y = 0, Width = screenBounds.Width, Height = screenBounds.Height }
+                : new ScreenRegion { X = regionX, Y = regionY, Width = regionWidth, Height = regionHeight };
+
+            var template = new TemplateImage
+            {
+                Name = templateName,
+                ImageData = capturedImageData,
+                CaptureRegion = region.ToRectangle(),
+                MatchThreshold = 0.8
+            };
+
+            await ScriptStorage.SaveTemplateImageAsync(template);
+            ShowStatus($"Template '{templateName}' saved successfully!", "alert-success");
+            templateName = string.Empty;
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error saving template: {ex.Message}", "alert-danger");
+        }
+        finally
+        {
+            isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DownloadImage()
+    {
+        if (capturedImageData == null) return;
+
+        try
+        {
+            var fileName = $"screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png";
+            var base64 = Convert.ToBase64String(capturedImageData);
+            
+            await JSRuntime.InvokeVoidAsync("downloadFile", fileName, "data:image/png;base64," + base64);
+            ShowStatus("Image download started!", "alert-info");
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error downloading image: {ex.Message}", "alert-danger");
+        }
+    }
+
+    private void SetCommonRegion()
+    {
+        regionWidth = 800;
+        regionHeight = 600;
+        regionX = (screenBounds.Width - regionWidth) / 2;
+        regionY = (screenBounds.Height - regionHeight) / 2;
+        StateHasChanged();
+    }
+
+    private void SetTopLeftRegion()
+    {
+        regionWidth = 400;
+        regionHeight = 300;
+        regionX = 50;
+        regionY = 50;
+        StateHasChanged();
+    }
+
+    private void SetBottomRightRegion()
+    {
+        regionWidth = 400;
+        regionHeight = 300;
+        regionX = screenBounds.Width - regionWidth - 50;
+        regionY = screenBounds.Height - regionHeight - 50;
+        StateHasChanged();
+    }
+
+    private void ShowStatus(string message, string cssClass)
+    {
+        statusMessage = message;
+        statusClass = cssClass;
+        StateHasChanged();
+    }
+
+    private void ClearStatus()
+    {
+        statusMessage = string.Empty;
+        statusClass = string.Empty;
+    }
+}
+
+<script>
+    window.downloadFile = (filename, dataUrl) => {
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+</script>

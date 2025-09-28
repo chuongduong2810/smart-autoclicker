@@ -1,0 +1,157 @@
+@page "/"
+@using AutomationTool.Services
+@using AutomationTool.Models
+@inject IScriptStorageService ScriptStorage
+@inject IScriptExecutionService ScriptExecution
+
+<PageTitle>Dashboard - Automation Tool</PageTitle>
+
+<h1>Automation Tool Dashboard</h1>
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">📊 Overview</h5>
+                <p class="card-text">Total Scripts: @scripts.Count</p>
+                <p class="card-text">Active Executions: @executionStates.Count(e => e.Status == "RUNNING")</p>
+                <p class="card-text">Templates: @templates.Count</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">🚀 Quick Actions</h5>
+                <div class="d-grid gap-2">
+                    <a href="/screenshot" class="btn btn-primary">Take Screenshot</a>
+                    <a href="/scripts" class="btn btn-success">Create Script</a>
+                    <a href="/execution" class="btn btn-warning">View Executions</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">📈 Recent Activity</h5>
+                @if (recentLogs.Any())
+                {
+                    <div style="max-height: 200px; overflow-y: auto;">
+                        @foreach (var log in recentLogs.Take(5))
+                        {
+                            <div class="small">
+                                <span class="badge @GetLogLevelClass(log.Level)">@log.Level</span>
+                                @log.Message
+                                <br><small class="text-muted">@log.Timestamp.ToString("HH:mm:ss")</small>
+                            </div>
+                            <hr class="my-1">
+                        }
+                    </div>
+                }
+                else
+                {
+                    <p class="text-muted">No recent activity</p>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">📝 Recent Scripts</h5>
+                @if (scripts.Any())
+                {
+                    <div class="list-group list-group-flush">
+                        @foreach (var script in scripts.OrderByDescending(s => s.ModifiedAt).Take(5))
+                        {
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>@script.Name</strong>
+                                    <br><small class="text-muted">@script.Description</small>
+                                </div>
+                                <span class="badge bg-primary rounded-pill">@script.Steps.Count steps</span>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <p class="text-muted">No scripts created yet</p>
+                }
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">⚡ System Status</h5>
+                <div class="row">
+                    <div class="col-6">
+                        <div class="text-center">
+                            <div class="display-6 text-success">✅</div>
+                            <small>Screenshot Service</small>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="text-center">
+                            <div class="display-6 text-success">✅</div>
+                            <small>Image Recognition</small>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="text-center">
+                            <div class="display-6 text-success">✅</div>
+                            <small>Automation Engine</small>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="text-center">
+                            <div class="display-6 text-success">✅</div>
+                            <small>Script Storage</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<AutomationScript> scripts = new();
+    private List<TemplateImage> templates = new();
+    private List<ScriptExecutionState> executionStates = new();
+    private List<ExecutionLog> recentLogs = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        scripts = await ScriptStorage.GetAllScriptsAsync();
+        templates = await ScriptStorage.GetAllTemplateImagesAsync();
+        executionStates = ScriptExecution.GetAllExecutionStates();
+        
+        // Get recent logs from all execution states
+        recentLogs = executionStates
+            .SelectMany(e => e.Logs)
+            .OrderByDescending(l => l.Timestamp)
+            .Take(10)
+            .ToList();
+    }
+
+    private string GetLogLevelClass(string level)
+    {
+        return level.ToUpper() switch
+        {
+            "ERROR" => "bg-danger",
+            "WARNING" => "bg-warning text-dark",
+            "INFO" => "bg-info text-dark",
+            "DEBUG" => "bg-secondary",
+            _ => "bg-light text-dark"
+        };
+    }
+}
