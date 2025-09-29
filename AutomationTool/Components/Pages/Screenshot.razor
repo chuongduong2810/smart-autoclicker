@@ -1,6 +1,7 @@
 @page "/screenshot"
 @using AutomationTool.Services
 @using AutomationTool.Models
+@using Microsoft.JSInterop
 @inject IScreenshotService ScreenshotService
 @inject IScriptStorageService ScriptStorage
 @inject IJSRuntime JSRuntime
@@ -45,6 +46,12 @@
                             <label class="form-label">Height</label>
                             <input type="number" class="form-control" @bind="regionHeight" min="1">
                         </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <button class="btn btn-outline-secondary" @onclick="StartRegionSelection">
+                            🖱️ Select Region on Screen
+                        </button>
                     </div>
                 }
 
@@ -177,6 +184,7 @@
     private bool isSaving = false;
     private string statusMessage = string.Empty;
     private string statusClass = string.Empty;
+    private DotNetObjectReference<Screenshot>? selfRef;
 
     protected override async Task OnInitializedAsync()
     {
@@ -185,6 +193,14 @@
         // Set default region to center of screen
         regionX = (screenBounds.Width - regionWidth) / 2;
         regionY = (screenBounds.Height - regionHeight) / 2;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            selfRef = DotNetObjectReference.Create(this);
+        }
     }
 
     private void SetCaptureMode(CaptureMode mode)
@@ -320,6 +336,34 @@
         statusMessage = string.Empty;
         statusClass = string.Empty;
     }
+
+    private async Task StartRegionSelection()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("startRegionSelection", selfRef);
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to start region selection: {ex.Message}", "alert-danger");
+        }
+    }
+
+    [JSInvokable]
+    public void OnRegionSelected(int x, int y, int width, int height)
+    {
+        regionX = x;
+        regionY = y;
+        regionWidth = width;
+        regionHeight = height;
+        ShowStatus($"Region selected: ({regionX}, {regionY}, {regionWidth}x{regionHeight})", "alert-info");
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        selfRef?.Dispose();
+    }
 }
 
 <script>
@@ -330,5 +374,97 @@
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+    };
+
+    // Simple full-viewport overlay for selecting a region; computes absolute screen coordinates
+    window.startRegionSelection = (dotnetRef) => {
+        try {
+            const overlay = document.createElement('div');
+            overlay.style.position = 'fixed';
+            overlay.style.left = '0';
+            overlay.style.top = '0';
+            overlay.style.width = '100vw';
+            overlay.style.height = '100vh';
+            overlay.style.background = 'rgba(0,0,0,0.15)';
+            overlay.style.cursor = 'crosshair';
+            overlay.style.zIndex = '999999';
+
+            const selection = document.createElement('div');
+            selection.style.position = 'fixed';
+            selection.style.border = '2px solid #0d6efd';
+            selection.style.background = 'rgba(13,110,253,0.15)';
+            selection.style.pointerEvents = 'none';
+            selection.style.display = 'none';
+
+            document.body.appendChild(overlay);
+            document.body.appendChild(selection);
+
+            let startX = 0, startY = 0, endX = 0, endY = 0, isSelecting = false;
+
+            const onMouseDown = (e) => {
+                isSelecting = true;
+                startX = e.clientX;
+                startY = e.clientY;
+                selection.style.left = `${startX}px`;
+                selection.style.top = `${startY}px`;
+                selection.style.width = '0px';
+                selection.style.height = '0px';
+                selection.style.display = 'block';
+            };
+
+            const onMouseMove = (e) => {
+                if (!isSelecting) return;
+                endX = e.clientX;
+                endY = e.clientY;
+                const left = Math.min(startX, endX);
+                const top = Math.min(startY, endY);
+                const width = Math.abs(endX - startX);
+                const height = Math.abs(endY - startY);
+                selection.style.left = `${left}px`;
+                selection.style.top = `${top}px`;
+                selection.style.width = `${width}px`;
+                selection.style.height = `${height}px`;
+            };
+
+            const cleanup = () => {
+                overlay.removeEventListener('mousedown', onMouseDown);
+                window.removeEventListener('mousemove', onMouseMove);
+                window.removeEventListener('mouseup', onMouseUp);
+                if (selection && selection.parentNode) selection.parentNode.removeChild(selection);
+                if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            };
+
+            const onMouseUp = async (e) => {
+                if (!isSelecting) { cleanup(); return; }
+                isSelecting = false;
+                endX = e.clientX;
+                endY = e.clientY;
+                const left = Math.min(startX, endX);
+                const top = Math.min(startY, endY);
+                const width = Math.abs(endX - startX);
+                const height = Math.abs(endY - startY);
+
+                const dpr = window.devicePixelRatio || 1;
+                const screenOffsetX = (window.screenX !== undefined ? window.screenX : window.screenLeft) || 0;
+                const screenOffsetY = (window.screenY !== undefined ? window.screenY : window.screenTop) || 0;
+
+                const absX = Math.round((screenOffsetX + left) * dpr);
+                const absY = Math.round((screenOffsetY + top) * dpr);
+                const absW = Math.round(width * dpr);
+                const absH = Math.round(height * dpr);
+
+                cleanup();
+
+                if (absW > 2 && absH > 2 && dotnetRef && dotnetRef.invokeMethodAsync) {
+                    try { await dotnetRef.invokeMethodAsync('OnRegionSelected', absX, absY, absW, absH); } catch {}
+                }
+            };
+
+            overlay.addEventListener('mousedown', onMouseDown);
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('mouseup', onMouseUp);
+        } catch (err) {
+            console.error('startRegionSelection error', err);
+        }
     };
 </script>
