@@ -1,0 +1,534 @@
+@using AutomationTool.Services
+@using AutomationTool.Models
+@using Microsoft.JSInterop
+@inject IScriptExecutionService ScriptExecution
+@inject IScriptStorageService ScriptStorage
+@inject IJSRuntime JSRuntime
+@implements IDisposable
+
+@if (hasActiveExecution)
+{
+    <div class="execution-toolbar @(isVisible ? "visible" : "hidden")" @onclick:stopPropagation="true">
+        <div class="toolbar-content">
+            <!-- Status Indicator -->
+            <div class="status-section">
+                <div class="status-indicator @GetStatusClass()"></div>
+                <div class="status-info">
+                    <div class="script-name">@currentScript?.Name</div>
+                    <div class="status-text">@GetStatusText()</div>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="controls-section">
+                @if (currentState?.Status == "RUNNING")
+                {
+                    <button class="toolbar-btn pause-btn" @onclick="PauseExecution" title="Pause (F9)">
+                        <i class="fas fa-pause"></i>
+                        <span>Pause</span>
+                        <small>F9</small>
+                    </button>
+                }
+                else if (currentState?.Status == "PAUSED")
+                {
+                    <button class="toolbar-btn resume-btn" @onclick="ResumeExecution" title="Resume (F9)">
+                        <i class="fas fa-play"></i>
+                        <span>Resume</span>
+                        <small>F9</small>
+                    </button>
+                }
+
+                <button class="toolbar-btn stop-btn" @onclick="StopExecution" title="Stop (F10)">
+                    <i class="fas fa-stop"></i>
+                    <span>Stop</span>
+                    <small>F10</small>
+                </button>
+            </div>
+
+            <!-- Toggle Visibility -->
+            <div class="toggle-section">
+                <button class="toolbar-btn toggle-btn" @onclick="ToggleVisibility" title="Toggle Toolbar (F11)">
+                    <i class="fas @(isVisible ? "fa-chevron-down" : "fa-chevron-up")"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Progress Bar (for finite repeats) -->
+        @if (currentState != null && !currentState.IsInfiniteRepeat && currentState.TotalRepeats > 1)
+        {
+            <div class="progress-section">
+                <div class="progress">
+                    <div class="progress-bar" style="width: @(((double)currentState.CurrentRepeat / currentState.TotalRepeats) * 100)%"></div>
+                </div>
+                <small class="progress-text">@currentState.CurrentRepeat / @currentState.TotalRepeats repeats</small>
+            </div>
+        }
+        else if (currentState != null && currentState.IsInfiniteRepeat)
+        {
+            <div class="progress-section">
+                <div class="infinite-indicator">
+                    <span class="pulse-dot"></span>
+                    <small>Repeat #@currentState.CurrentRepeat - Infinite Mode</small>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<!-- Hotkey Notifications -->
+@if (!string.IsNullOrEmpty(hotkeyNotification))
+{
+    <div class="hotkey-notification @(showNotification ? "show" : "")">
+        <i class="fas fa-keyboard"></i>
+        @hotkeyNotification
+    </div>
+}
+
+<style>
+    .execution-toolbar {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+        border-radius: 12px;
+        padding: 12px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        z-index: 9999;
+        min-width: 320px;
+        transition: all 0.3s ease;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    .execution-toolbar.visible {
+        transform: translateY(0);
+        opacity: 1;
+    }
+
+    .execution-toolbar.hidden {
+        transform: translateY(-80%);
+        opacity: 0.8;
+    }
+
+    .execution-toolbar:hover {
+        transform: translateY(0) !important;
+        opacity: 1 !important;
+    }
+
+    .toolbar-content {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .status-section {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 1;
+    }
+
+    .status-indicator {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        animation: pulse 2s infinite;
+    }
+
+    .status-indicator.running {
+        background: #28a745;
+    }
+
+    .status-indicator.paused {
+        background: #ffc107;
+        animation: none;
+    }
+
+    .status-indicator.stopped {
+        background: #dc3545;
+        animation: none;
+    }
+
+    .status-info {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .script-name {
+        font-weight: 600;
+        font-size: 14px;
+        color: #ffffff;
+        max-width: 120px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .status-text {
+        font-size: 11px;
+        color: #aaaaaa;
+    }
+
+    .controls-section {
+        display: flex;
+        gap: 6px;
+    }
+
+    .toolbar-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: white;
+        padding: 8px 6px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        min-width: 45px;
+        font-size: 12px;
+    }
+
+    .toolbar-btn:hover {
+        background: rgba(255, 255, 255, 0.2);
+        transform: translateY(-1px);
+    }
+
+    .toolbar-btn i {
+        font-size: 14px;
+        margin-bottom: 2px;
+    }
+
+    .toolbar-btn span {
+        font-size: 10px;
+        font-weight: 500;
+    }
+
+    .toolbar-btn small {
+        font-size: 8px;
+        opacity: 0.7;
+    }
+
+    .pause-btn:hover {
+        background: rgba(255, 193, 7, 0.3);
+        border-color: #ffc107;
+    }
+
+    .resume-btn:hover {
+        background: rgba(40, 167, 69, 0.3);
+        border-color: #28a745;
+    }
+
+    .stop-btn:hover {
+        background: rgba(220, 53, 69, 0.3);
+        border-color: #dc3545;
+    }
+
+    .toggle-btn {
+        min-width: 30px;
+        padding: 8px 4px;
+    }
+
+    .toggle-section {
+        border-left: 1px solid rgba(255, 255, 255, 0.2);
+        padding-left: 8px;
+    }
+
+    .progress-section {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .progress {
+        width: 100%;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-bottom: 4px;
+    }
+
+    .progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #28a745, #20c997);
+        transition: width 0.3s ease;
+    }
+
+    .progress-text {
+        font-size: 10px;
+        color: #aaaaaa;
+        text-align: center;
+        display: block;
+    }
+
+    .infinite-indicator {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        justify-content: center;
+    }
+
+    .pulse-dot {
+        width: 8px;
+        height: 8px;
+        background: #17a2b8;
+        border-radius: 50%;
+        animation: pulse 1.5s infinite;
+    }
+
+    @@keyframes pulse {
+        0% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(1.1); }
+        100% { opacity: 1; transform: scale(1); }
+    }
+
+    .hotkey-notification {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+        padding: 12px 16px;
+        border-radius: 8px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        transform: translateY(100px);
+        opacity: 0;
+        transition: all 0.3s ease;
+        z-index: 10000;
+        font-size: 14px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .hotkey-notification.show {
+        transform: translateY(0);
+        opacity: 1;
+    }
+
+    .hotkey-notification i {
+        color: #17a2b8;
+    }
+
+    @@media (max-width: 768px) {
+        .execution-toolbar {
+            right: 10px;
+            top: 10px;
+            min-width: 280px;
+        }
+        
+        .toolbar-btn span {
+            display: none;
+        }
+        
+        .script-name {
+            max-width: 80px;
+        }
+    }
+</style>
+
+@code {
+    private bool hasActiveExecution = false;
+    private bool isVisible = true;
+    private ScriptExecutionState? currentState;
+    private AutomationScript? currentScript;
+    private System.Threading.Timer? refreshTimer;
+    
+    // Notification system
+    private string hotkeyNotification = string.Empty;
+    private bool showNotification = false;
+    private System.Threading.Timer? notificationTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Subscribe to execution state changes
+        ScriptExecution.StateChanged += OnStateChanged;
+        
+        // Set up refresh timer to update UI every second
+        refreshTimer = new System.Threading.Timer(async _ => await InvokeAsync(RefreshState), null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+        
+        // Initial state check
+        await RefreshState();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Set up hotkeys after first render when JS interop is available
+            await SetupHotkeys();
+        }
+    }
+
+    private async Task SetupHotkeys()
+    {
+        await JSRuntime.InvokeVoidAsync("setupExecutionHotkeys", DotNetObjectReference.Create(this));
+    }
+
+    private async Task RefreshState()
+    {
+        try
+        {
+            var states = ScriptExecution.GetAllExecutionStates();
+            var activeState = states.FirstOrDefault(s => s.Status == "RUNNING" || s.Status == "PAUSED");
+            
+            if (activeState != null)
+            {
+                currentState = activeState;
+                hasActiveExecution = true;
+                
+                // Get script details
+                try
+                {
+                    currentScript = await ScriptStorage.GetScriptAsync(activeState.ScriptId);
+                    if (currentScript == null)
+                    {
+                        currentScript = new AutomationScript { Name = $"Script {activeState.ScriptId[..8]}..." };
+                    }
+                }
+                catch
+                {
+                    currentScript = new AutomationScript { Name = $"Script {activeState.ScriptId[..8]}..." };
+                }
+            }
+            else
+            {
+                hasActiveExecution = false;
+                currentState = null;
+                currentScript = null;
+            }
+            
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            // Log error but don't throw to avoid breaking the UI
+            Console.WriteLine($"Error refreshing execution state: {ex.Message}");
+        }
+    }
+
+    private void OnStateChanged(object? sender, ScriptExecutionState state)
+    {
+        InvokeAsync(RefreshState);
+    }
+
+    private string GetStatusClass()
+    {
+        return currentState?.Status?.ToLower() switch
+        {
+            "running" => "running",
+            "paused" => "paused",
+            _ => "stopped"
+        };
+    }
+
+    private string GetStatusText()
+    {
+        if (currentState == null) return "Unknown";
+        
+        var status = currentState.Status?.ToUpper() ?? "UNKNOWN";
+        var duration = DateTime.Now - currentState.StartTime;
+        
+        return $"{status} • {duration:hh\\:mm\\:ss}";
+    }
+
+    private async Task PauseExecution()
+    {
+        if (currentState != null)
+        {
+            await ScriptExecution.PauseScriptAsync(currentState.ScriptId);
+            ShowNotification("Script Paused");
+        }
+    }
+
+    private async Task ResumeExecution()
+    {
+        if (currentState != null)
+        {
+            await ScriptExecution.ResumeScriptAsync(currentState.ScriptId);
+            ShowNotification("Script Resumed");
+        }
+    }
+
+    private async Task StopExecution()
+    {
+        if (currentState != null)
+        {
+            await ScriptExecution.StopScriptAsync(currentState.ScriptId);
+            ShowNotification("Script Stopped");
+        }
+    }
+
+    private void ToggleVisibility()
+    {
+        isVisible = !isVisible;
+        StateHasChanged();
+    }
+
+    private void ShowNotification(string message)
+    {
+        hotkeyNotification = message;
+        showNotification = true;
+        StateHasChanged();
+        
+        // Hide notification after 2 seconds
+        notificationTimer?.Dispose();
+        notificationTimer = new System.Threading.Timer(_ => InvokeAsync(() => {
+            showNotification = false;
+            StateHasChanged();
+        }), null, TimeSpan.FromSeconds(2), Timeout.InfiniteTimeSpan);
+    }
+
+    [JSInvokable]
+    public async Task HandleHotkey(string key)
+    {
+        switch (key)
+        {
+            case "F9":
+                if (currentState?.Status == "RUNNING")
+                {
+                    await PauseExecution();
+                    ShowNotification("F9 - Script Paused");
+                }
+                else if (currentState?.Status == "PAUSED")
+                {
+                    await ResumeExecution();
+                    ShowNotification("F9 - Script Resumed");
+                }
+                else if (hasActiveExecution)
+                {
+                    ShowNotification("F9 - No Running Script");
+                }
+                break;
+            case "F10":
+                if (hasActiveExecution)
+                {
+                    await StopExecution();
+                    ShowNotification("F10 - Script Stopped");
+                }
+                else
+                {
+                    ShowNotification("F10 - No Active Script");
+                }
+                break;
+            case "F11":
+                ToggleVisibility();
+                ShowNotification($"F11 - Toolbar {(isVisible ? "Visible" : "Hidden")}");
+                break;
+        }
+    }
+
+    public void Dispose()
+    {
+        ScriptExecution.StateChanged -= OnStateChanged;
+        refreshTimer?.Dispose();
+        notificationTimer?.Dispose();
+        
+        // Clean up hotkeys
+        JSRuntime.InvokeVoidAsync("cleanupExecutionHotkeys");
+    }
+}

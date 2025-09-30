@@ -11,6 +11,11 @@ namespace AutomationTool.Models
         public DateTime ModifiedAt { get; set; } = DateTime.Now;
         public List<ScriptStep> Steps { get; set; } = new List<ScriptStep>();
         public bool IsActive { get; set; } = false;
+        
+        // Repeat configuration
+        public bool IsInfiniteRepeat { get; set; } = false;
+        public int RepeatCount { get; set; } = 1;
+        public int DelayBetweenRepeats { get; set; } = 0; // Milliseconds delay between repetitions
     }
 
     public class ScriptStep
@@ -92,6 +97,12 @@ namespace AutomationTool.Models
         public List<ExecutionLog> Logs { get; set; } = new List<ExecutionLog>();
         public int LoopCount { get; set; } = 0;
         public Dictionary<string, object> Variables { get; set; } = new Dictionary<string, object>();
+        
+        // Repeat execution tracking
+        public int CurrentRepeat { get; set; } = 0;
+        public int TotalRepeats { get; set; } = 1;
+        public bool IsInfiniteRepeat { get; set; } = false;
+        public DateTime? LastRepeatTime { get; set; }
     }
 
     // Enums for better type safety

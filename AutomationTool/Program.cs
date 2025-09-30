@@ -13,6 +13,10 @@ builder.Services.AddSingleton<IImageRecognitionService, ImageRecognitionService>
 builder.Services.AddSingleton<IAutomationEngine, WindowsAutomationEngine>();
 builder.Services.AddSingleton<IScriptStorageService, FileBasedScriptStorageService>();
 builder.Services.AddSingleton<IScriptExecutionService, ScriptExecutionService>();
+// Desktop window service is created directly in the manager
+
+// Add background services
+builder.Services.AddHostedService<DesktopToolbarManagerService>();
 
 // Add logging
 builder.Services.AddLogging(builder =>

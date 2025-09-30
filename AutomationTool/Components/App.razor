@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="bootstrap/bootstrap.min.css" />
     <link rel="stylesheet" href="app.css" />
     <link rel="stylesheet" href="AutomationTool.styles.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" />
     <link rel="icon" type="image/png" href="favicon.png" />
     <HeadOutlet />
 </head>
@@ -15,6 +16,58 @@
 <body>
     <Routes />
     <script src="_framework/blazor.web.js"></script>
+    <script>
+        let executionToolbarComponent = null;
+        let hotkeyListeners = [];
+
+        window.setupExecutionHotkeys = (dotNetObjectRef) => {
+            executionToolbarComponent = dotNetObjectRef;
+            
+            // Remove existing listeners
+            cleanupExecutionHotkeys();
+            
+            // Add new listeners
+            const handleKeydown = (event) => {
+                // Only handle if not in an input field
+                if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
+                    return;
+                }
+                
+                switch (event.code) {
+                    case 'F9':
+                        event.preventDefault();
+                        executionToolbarComponent.invokeMethodAsync('HandleHotkey', 'F9');
+                        break;
+                    case 'F10':
+                        event.preventDefault();
+                        executionToolbarComponent.invokeMethodAsync('HandleHotkey', 'F10');
+                        break;
+                    case 'F11':
+                        event.preventDefault();
+                        executionToolbarComponent.invokeMethodAsync('HandleHotkey', 'F11');
+                        break;
+                }
+            };
+            
+            document.addEventListener('keydown', handleKeydown);
+            hotkeyListeners.push(handleKeydown);
+        };
+
+        window.cleanupExecutionHotkeys = () => {
+            hotkeyListeners.forEach(listener => {
+                document.removeEventListener('keydown', listener);
+            });
+            hotkeyListeners = [];
+            executionToolbarComponent = null;
+        };
+
+        // Prevent default F11 behavior (fullscreen) when toolbar is active
+        document.addEventListener('keydown', (event) => {
+            if (event.code === 'F11' && executionToolbarComponent) {
+                event.preventDefault();
+            }
+        });
+    </script>
 </body>
 
 </html>

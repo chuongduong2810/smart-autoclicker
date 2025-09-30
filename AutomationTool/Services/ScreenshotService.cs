@@ -3,6 +3,7 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using AutomationTool.Models;
+using AutomationTool.Utils;
 
 namespace AutomationTool.Services
 {
@@ -15,6 +16,7 @@ namespace AutomationTool.Services
         Task<TemplateImage> CreateTemplateImageAsync(ScreenRegion region, string name);
         Rectangle GetScreenBounds();
         List<Rectangle> GetAllScreenBounds();
+        Task<Rectangle?> SelectDesktopRegionAsync();
     }
 
     public class ScreenshotService : IScreenshotService
@@ -217,6 +219,32 @@ namespace AutomationTool.Services
             var bounds = new List<Rectangle> { GetScreenBounds() };
             return bounds;
         }
+
+        public async Task<Rectangle?> SelectDesktopRegionAsync()
+        {
+            try
+            {
+                _logger.LogInformation("Starting desktop region selection...");
+                var selectedRegion = await DesktopRegionSelector.SelectRegionAsync();
+                
+                if (selectedRegion.HasValue)
+                {
+                    _logger.LogInformation("Desktop region selected: {X}, {Y}, {Width}x{Height}", 
+                        selectedRegion.Value.X, selectedRegion.Value.Y, selectedRegion.Value.Width, selectedRegion.Value.Height);
+                }
+                else
+                {
+                    _logger.LogInformation("Desktop region selection cancelled");
+                }
+                
+                return selectedRegion;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during desktop region selection");
+                throw;
+            }
+        }
     }
 
     // Alternative implementation using System.Drawing.Graphics for environments where P/Invoke is restricted
@@ -328,6 +356,12 @@ namespace AutomationTool.Services
         public List<Rectangle> GetAllScreenBounds()
         {
             return Screen.AllScreens.Select(s => s.Bounds).ToList();
+        }
+
+        public async Task<Rectangle?> SelectDesktopRegionAsync()
+        {
+            // Use the same desktop region selector
+            return await DesktopRegionSelector.SelectRegionAsync();
         }
     }
 }

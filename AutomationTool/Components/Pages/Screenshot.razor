@@ -1,10 +1,13 @@
 @page "/screenshot"
+@rendermode InteractiveServer
 @using AutomationTool.Services
 @using AutomationTool.Models
 @using Microsoft.JSInterop
 @inject IScreenshotService ScreenshotService
 @inject IScriptStorageService ScriptStorage
 @inject IJSRuntime JSRuntime
+@inject ILogger<Screenshot> _logger
+@inject NavigationManager Navigation
 
 <PageTitle>Screenshot Capture</PageTitle>
 
@@ -49,9 +52,22 @@
                     </div>
 
                     <div class="mb-3">
-                        <button class="btn btn-outline-secondary" @onclick="StartRegionSelection">
-                            🖱️ Select Region on Screen
-                        </button>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-outline-secondary" @onclick="StartRegionSelection">
+                                🖱️ Select Region on Screen (Browser)
+                            </button>
+                            <button class="btn btn-outline-primary" @onclick="StartDesktopRegionSelection" disabled="@isSelectingRegion">
+                                @if (isSelectingRegion)
+                                {
+                                    <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                                    <text> Selecting Desktop Region...</text>
+                                }
+                                else
+                                {
+                                    <text>🖥️ Select Region on Desktop (Full Screen)</text>
+                                }
+                            </button>
+                        </div>
                     </div>
                 }
 
@@ -73,19 +89,35 @@
                         }
                     </button>
                     
-                    @if (!string.IsNullOrEmpty(templateName) && capturedImageData != null)
+                    @if (capturedImageData != null)
                     {
-                        <button class="btn btn-success" @onclick="SaveAsTemplate" disabled="@isSaving">
-                            @if (isSaving)
+                        <div class="btn-group">
+                            @if (!string.IsNullOrEmpty(templateName))
                             {
-                                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                                <text> Saving...</text>
+                                <button class="btn btn-success" @onclick="SaveAsTemplate" disabled="@isSaving">
+                                    @if (isSaving)
+                                    {
+                                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                                        <text> Saving...</text>
+                                    }
+                                    else
+                                    {
+                                        <text>💾 Save as Template</text>
+                                    }
+                                </button>
                             }
-                            else
-                            {
-                                <text>💾 Save as Template</text>
-                            }
-                        </button>
+                            <button class="btn btn-outline-primary" @onclick="SaveAsTemplateAndCreateScript" disabled="@isSaving">
+                                @if (isSaving)
+                                {
+                                    <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                                    <text> Creating...</text>
+                                }
+                                else
+                                {
+                                    <text>🎯 Save Template & Create Script</text>
+                                }
+                            </button>
+                        </div>
                     }
                 </div>
             </div>
@@ -182,17 +214,31 @@
     private System.Drawing.Rectangle screenBounds;
     private bool isCapturing = false;
     private bool isSaving = false;
+    private bool isSelectingRegion = false;
     private string statusMessage = string.Empty;
     private string statusClass = string.Empty;
     private DotNetObjectReference<Screenshot>? selfRef;
 
     protected override async Task OnInitializedAsync()
     {
-        screenBounds = ScreenshotService.GetScreenBounds();
-        
-        // Set default region to center of screen
-        regionX = (screenBounds.Width - regionWidth) / 2;
-        regionY = (screenBounds.Height - regionHeight) / 2;
+        try
+        {
+            _logger?.LogInformation("Screenshot component initializing...");
+            
+            screenBounds = ScreenshotService.GetScreenBounds();
+            _logger?.LogInformation("Screen bounds: {Width}x{Height}", screenBounds.Width, screenBounds.Height);
+            
+            // Set default region to center of screen
+            regionX = (screenBounds.Width - regionWidth) / 2;
+            regionY = (screenBounds.Height - regionHeight) / 2;
+            
+            _logger?.LogInformation("Default region set to: ({X}, {Y}, {Width}x{Height})", regionX, regionY, regionWidth, regionHeight);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Error during component initialization");
+            ShowStatus($"Error initializing: {ex.Message}", "alert-danger");
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -209,30 +255,48 @@
         StateHasChanged();
     }
 
+
     private async Task CaptureScreenshot()
     {
         try
         {
             isCapturing = true;
             ClearStatus();
+            ShowStatus("Starting screenshot capture...", "alert-info");
             StateHasChanged();
+
+            _logger?.LogInformation("Starting screenshot capture. Mode: {Mode}", currentMode);
 
             if (currentMode == CaptureMode.FullScreen)
             {
+                _logger?.LogInformation("Capturing full screen...");
                 capturedImageData = await ScreenshotService.CaptureFullScreenAsync();
+                _logger?.LogInformation("Full screen captured. Image size: {Size} bytes", capturedImageData?.Length ?? 0);
                 ShowStatus("Full screen captured successfully!", "alert-success");
             }
             else
             {
+                _logger?.LogInformation("Capturing region: ({X}, {Y}, {Width}x{Height})", regionX, regionY, regionWidth, regionHeight);
                 capturedImageData = await ScreenshotService.CaptureRegionAsync(regionX, regionY, regionWidth, regionHeight);
+                _logger?.LogInformation("Region captured. Image size: {Size} bytes", capturedImageData?.Length ?? 0);
                 ShowStatus($"Region ({regionX}, {regionY}, {regionWidth}x{regionHeight}) captured successfully!", "alert-success");
             }
 
             lastCaptureTime = DateTime.Now;
+            _logger?.LogInformation("Screenshot capture completed successfully");
         }
         catch (Exception ex)
         {
+            _logger?.LogError(ex, "Error capturing screenshot");
             ShowStatus($"Error capturing screenshot: {ex.Message}", "alert-danger");
+            
+            // Also log the full exception details
+            var fullError = ex.ToString();
+            if (ex.InnerException != null)
+            {
+                fullError += $"\nInner Exception: {ex.InnerException}";
+            }
+            _logger?.LogError("Full exception details: {FullError}", fullError);
         }
         finally
         {
@@ -271,6 +335,102 @@
         catch (Exception ex)
         {
             ShowStatus($"Error saving template: {ex.Message}", "alert-danger");
+        }
+        finally
+        {
+            isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveAsTemplateAndCreateScript()
+    {
+        if (capturedImageData == null)
+        {
+            ShowStatus("Please capture a screenshot first", "alert-warning");
+            return;
+        }
+
+        try
+        {
+            isSaving = true;
+            ClearStatus();
+            ShowStatus("Creating template and script...", "alert-info");
+            StateHasChanged();
+
+            // Generate template name if not provided
+            var finalTemplateName = string.IsNullOrWhiteSpace(templateName) 
+                ? $"Template_{DateTime.Now:yyyyMMdd_HHmmss}"
+                : templateName;
+
+            var region = currentMode == CaptureMode.FullScreen 
+                ? new ScreenRegion { X = 0, Y = 0, Width = screenBounds.Width, Height = screenBounds.Height }
+                : new ScreenRegion { X = regionX, Y = regionY, Width = regionWidth, Height = regionHeight };
+
+            // Save template image
+            var template = new TemplateImage
+            {
+                Name = finalTemplateName,
+                ImageData = capturedImageData,
+                CaptureRegion = region.ToRectangle(),
+                MatchThreshold = 0.8
+            };
+
+            var templateId = await ScriptStorage.SaveTemplateImageAsync(template);
+            
+            // Create a script that uses this template
+            var script = new AutomationScript
+            {
+                Name = $"Auto Script - {finalTemplateName}",
+                Description = $"Automatically generated script to find and click '{finalTemplateName}'",
+                Steps = new List<ScriptStep>
+                {
+                    new ScriptStep
+                    {
+                        Name = $"Find and click {finalTemplateName}",
+                        Type = "condition",
+                        Order = 1,
+                        Conditions = new List<ScriptCondition>
+                        {
+                            new ScriptCondition
+                            {
+                                Type = "image_found",
+                                Parameters = new Dictionary<string, object>
+                                {
+                                    {"templateImageId", templateId},
+                                    {"threshold", 0.8}
+                                }
+                            }
+                        },
+                        Actions = new List<ScriptAction>
+                        {
+                            new ScriptAction
+                            {
+                                Type = "click",
+                                Parameters = new Dictionary<string, object> 
+                                { 
+                                    {"x", region.X + region.Width / 2}, 
+                                    {"y", region.Y + region.Height / 2} 
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
+            await ScriptStorage.SaveScriptAsync(script);
+
+            ShowStatus($"Template '{finalTemplateName}' and automation script created successfully!", "alert-success");
+            templateName = string.Empty;
+
+            // Navigate to scripts page to see the new script
+            await Task.Delay(2000); // Show success message briefly
+            Navigation.NavigateTo("/scripts");
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Error creating template and script");
+            ShowStatus($"Error creating template and script: {ex.Message}", "alert-danger");
         }
         finally
         {
@@ -349,6 +509,48 @@
         }
     }
 
+    private async Task StartDesktopRegionSelection()
+    {
+        try
+        {
+            isSelectingRegion = true;
+            ClearStatus();
+            ShowStatus("Opening desktop region selector... Click and drag to select an area on your entire desktop.", "alert-info");
+            StateHasChanged();
+
+            _logger?.LogInformation("Starting desktop region selection...");
+            
+            var selectedRegion = await ScreenshotService.SelectDesktopRegionAsync();
+            
+            if (selectedRegion.HasValue)
+            {
+                var rect = selectedRegion.Value;
+                regionX = rect.X;
+                regionY = rect.Y;
+                regionWidth = rect.Width;
+                regionHeight = rect.Height;
+                
+                ShowStatus($"Desktop region selected: ({regionX}, {regionY}, {regionWidth}x{regionHeight})", "alert-success");
+                _logger?.LogInformation("Desktop region selected and applied: ({X}, {Y}, {Width}x{Height})", regionX, regionY, regionWidth, regionHeight);
+            }
+            else
+            {
+                ShowStatus("Desktop region selection cancelled", "alert-warning");
+                _logger?.LogInformation("Desktop region selection was cancelled");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Error during desktop region selection");
+            ShowStatus($"Error selecting desktop region: {ex.Message}", "alert-danger");
+        }
+        finally
+        {
+            isSelectingRegion = false;
+            StateHasChanged();
+        }
+    }
+
     [JSInvokable]
     public void OnRegionSelected(int x, int y, int width, int height)
     {
@@ -376,7 +578,7 @@
         document.body.removeChild(link);
     };
 
-    // Simple full-viewport overlay for selecting a region; computes absolute screen coordinates
+    // Enhanced full-desktop overlay for selecting a region with better visibility
     window.startRegionSelection = (dotnetRef) => {
         try {
             const overlay = document.createElement('div');
@@ -385,16 +587,33 @@
             overlay.style.top = '0';
             overlay.style.width = '100vw';
             overlay.style.height = '100vh';
-            overlay.style.background = 'rgba(0,0,0,0.15)';
+            overlay.style.background = 'rgba(0,0,0,0.3)';
             overlay.style.cursor = 'crosshair';
             overlay.style.zIndex = '999999';
+            
+            // Add instructions
+            const instructions = document.createElement('div');
+            instructions.style.position = 'fixed';
+            instructions.style.top = '20px';
+            instructions.style.left = '50%';
+            instructions.style.transform = 'translateX(-50%)';
+            instructions.style.background = 'rgba(0,0,0,0.8)';
+            instructions.style.color = 'white';
+            instructions.style.padding = '10px 20px';
+            instructions.style.borderRadius = '5px';
+            instructions.style.fontSize = '14px';
+            instructions.style.zIndex = '1000000';
+            instructions.style.pointerEvents = 'none';
+            instructions.textContent = 'Click and drag to select a region. Press ESC to cancel.';
+            overlay.appendChild(instructions);
 
             const selection = document.createElement('div');
             selection.style.position = 'fixed';
-            selection.style.border = '2px solid #0d6efd';
-            selection.style.background = 'rgba(13,110,253,0.15)';
+            selection.style.border = '3px solid #0d6efd';
+            selection.style.background = 'rgba(13,110,253,0.2)';
             selection.style.pointerEvents = 'none';
             selection.style.display = 'none';
+            selection.style.boxShadow = '0 0 10px rgba(13,110,253,0.5)';
 
             document.body.appendChild(overlay);
             document.body.appendChild(selection);
@@ -424,14 +643,44 @@
                 selection.style.top = `${top}px`;
                 selection.style.width = `${width}px`;
                 selection.style.height = `${height}px`;
+                
+                // Show coordinates during selection
+                if (width > 5 && height > 5) {
+                    coordsDisplay.style.display = 'block';
+                    coordsDisplay.textContent = `Position: (${left}, ${top}) Size: ${width} × ${height}`;
+                }
             };
+
+            // Add coordinates display
+            const coordsDisplay = document.createElement('div');
+            coordsDisplay.style.position = 'fixed';
+            coordsDisplay.style.bottom = '20px';
+            coordsDisplay.style.left = '50%';
+            coordsDisplay.style.transform = 'translateX(-50%)';
+            coordsDisplay.style.background = 'rgba(0,0,0,0.8)';
+            coordsDisplay.style.color = 'white';
+            coordsDisplay.style.padding = '5px 15px';
+            coordsDisplay.style.borderRadius = '3px';
+            coordsDisplay.style.fontSize = '12px';
+            coordsDisplay.style.zIndex = '1000000';
+            coordsDisplay.style.pointerEvents = 'none';
+            coordsDisplay.style.display = 'none';
+            overlay.appendChild(coordsDisplay);
 
             const cleanup = () => {
                 overlay.removeEventListener('mousedown', onMouseDown);
                 window.removeEventListener('mousemove', onMouseMove);
                 window.removeEventListener('mouseup', onMouseUp);
+                window.removeEventListener('keydown', onKeyDown);
                 if (selection && selection.parentNode) selection.parentNode.removeChild(selection);
                 if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            };
+
+            // ESC key support
+            const onKeyDown = (e) => {
+                if (e.key === 'Escape') {
+                    cleanup();
+                }
             };
 
             const onMouseUp = async (e) => {
@@ -463,6 +712,7 @@
             overlay.addEventListener('mousedown', onMouseDown);
             window.addEventListener('mousemove', onMouseMove);
             window.addEventListener('mouseup', onMouseUp);
+            window.addEventListener('keydown', onKeyDown);
         } catch (err) {
             console.error('startRegionSelection error', err);
         }

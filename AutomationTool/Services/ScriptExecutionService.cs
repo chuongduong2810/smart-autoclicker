@@ -96,29 +96,58 @@ namespace AutomationTool.Services
             }
         }
 
-        public async Task StopScriptAsync(string scriptId)
+        public Task StopScriptAsync(string scriptId)
         {
             try
             {
-                if (_cancellationTokens.TryGetValue(scriptId, out var cancellationTokenSource))
-                {
-                    cancellationTokenSource.Cancel();
-                    
-                    if (_executionTasks.TryGetValue(scriptId, out var task))
-                    {
-                        await task;
-                        _executionTasks.Remove(scriptId);
-                    }
-                    
-                    _cancellationTokens.Remove(scriptId);
-                }
-
+                _logger.LogInformation("Stop requested for script {ScriptId}", scriptId);
+                
+                // Update state immediately for instant UI feedback
                 if (_executionStates.TryGetValue(scriptId, out var state))
                 {
                     state.Status = ExecutionStatus.Stopped.ToString();
                     OnStateChanged(state);
-                    LogExecution(scriptId, string.Empty, Models.LogLevel.Info, "Script execution stopped");
+                    LogExecution(scriptId, string.Empty, Models.LogLevel.Info, "⏹ Script execution stopped");
                 }
+                
+                // Cancel the execution
+                if (_cancellationTokens.TryGetValue(scriptId, out var cancellationTokenSource))
+                {
+                    _logger.LogInformation("Cancelling execution for script {ScriptId}", scriptId);
+                    cancellationTokenSource.Cancel();
+                    _cancellationTokens.Remove(scriptId);
+                    
+                    // Don't wait for the task - let it finish in background
+                    // Just clean it up asynchronously
+                    if (_executionTasks.TryGetValue(scriptId, out var task))
+                    {
+                        _executionTasks.Remove(scriptId);
+                        
+                        // Clean up in background without blocking
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await task.ConfigureAwait(false);
+                                _logger.LogDebug("Script {ScriptId} execution task completed after cancellation", scriptId);
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                _logger.LogDebug("Script {ScriptId} execution cancelled successfully", scriptId);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Error waiting for script {ScriptId} task cleanup", scriptId);
+                            }
+                        });
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("No cancellation token found for script {ScriptId}", scriptId);
+                }
+                
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
@@ -127,16 +156,25 @@ namespace AutomationTool.Services
             }
         }
 
-        public async Task PauseScriptAsync(string scriptId)
+        public Task PauseScriptAsync(string scriptId)
         {
             try
             {
+                _logger.LogInformation("Pause requested for script {ScriptId}", scriptId);
+                
                 if (_executionStates.TryGetValue(scriptId, out var state))
                 {
                     state.Status = ExecutionStatus.Paused.ToString();
                     OnStateChanged(state);
-                    LogExecution(scriptId, string.Empty, Models.LogLevel.Info, "Script execution paused");
+                    LogExecution(scriptId, string.Empty, Models.LogLevel.Info, "⏸ Script execution paused");
+                    _logger.LogInformation("✓ Script {ScriptId} paused successfully", scriptId);
                 }
+                else
+                {
+                    _logger.LogWarning("No execution state found for script {ScriptId}", scriptId);
+                }
+                
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
@@ -145,16 +183,25 @@ namespace AutomationTool.Services
             }
         }
 
-        public async Task ResumeScriptAsync(string scriptId)
+        public Task ResumeScriptAsync(string scriptId)
         {
             try
             {
+                _logger.LogInformation("Resume requested for script {ScriptId}", scriptId);
+                
                 if (_executionStates.TryGetValue(scriptId, out var state))
                 {
                     state.Status = ExecutionStatus.Running.ToString();
                     OnStateChanged(state);
-                    LogExecution(scriptId, string.Empty, Models.LogLevel.Info, "Script execution resumed");
+                    LogExecution(scriptId, string.Empty, Models.LogLevel.Info, "▶ Script execution resumed");
+                    _logger.LogInformation("✓ Script {ScriptId} resumed successfully", scriptId);
                 }
+                else
+                {
+                    _logger.LogWarning("No execution state found for script {ScriptId}", scriptId);
+                }
+                
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
@@ -177,8 +224,76 @@ namespace AutomationTool.Services
         {
             try
             {
+                // Initialize repeat execution state
+                state.TotalRepeats = script.IsInfiniteRepeat ? int.MaxValue : script.RepeatCount;
+                state.IsInfiniteRepeat = script.IsInfiniteRepeat;
+                state.CurrentRepeat = 0;
+
+                LogExecution(script.Id, string.Empty, Models.LogLevel.Info, 
+                    script.IsInfiniteRepeat ? "Starting infinite script execution" : $"Starting script execution with {script.RepeatCount} repeat(s)");
+
+                // Main repeat loop
+                while ((state.CurrentRepeat < state.TotalRepeats || script.IsInfiniteRepeat) && !cancellationToken.IsCancellationRequested)
+                {
+                    state.CurrentRepeat++;
+                    state.LastRepeatTime = DateTime.Now;
+
+                    LogExecution(script.Id, string.Empty, Models.LogLevel.Info, 
+                        script.IsInfiniteRepeat ? $"Starting repeat #{state.CurrentRepeat}" : $"Starting repeat {state.CurrentRepeat}/{script.RepeatCount}");
+
+                    // Execute single script iteration
+                    var success = await ExecuteSingleIterationAsync(script, state, cancellationToken);
+
+                    if (!success)
+                    {
+                        LogExecution(script.Id, string.Empty, Models.LogLevel.Error, "Script iteration failed, stopping execution");
+                        break;
+                    }
+
+                    // Check if we should continue (for finite repeats)
+                    if (!script.IsInfiniteRepeat && state.CurrentRepeat >= script.RepeatCount)
+                    {
+                        break;
+                    }
+
+                    // Apply delay between repeats if configured
+                    if (script.DelayBetweenRepeats > 0 && (state.CurrentRepeat < state.TotalRepeats || script.IsInfiniteRepeat))
+                    {
+                        LogExecution(script.Id, string.Empty, Models.LogLevel.Info, $"Waiting {script.DelayBetweenRepeats}ms before next repeat");
+                        await Task.Delay(script.DelayBetweenRepeats, cancellationToken);
+                    }
+
+                    OnStateChanged(state);
+                }
+
+                // Script completed
+                state.Status = ExecutionStatus.Completed.ToString();
+                LogExecution(script.Id, string.Empty, Models.LogLevel.Info, 
+                    script.IsInfiniteRepeat ? $"Script execution stopped after {state.CurrentRepeat} repeats" : "Script execution completed");
+            }
+            catch (OperationCanceledException)
+            {
+                state.Status = ExecutionStatus.Stopped.ToString();
+                LogExecution(script.Id, string.Empty, Models.LogLevel.Info, $"Script execution cancelled after {state.CurrentRepeat} repeat(s)");
+            }
+            catch (Exception ex)
+            {
+                state.Status = ExecutionStatus.Error.ToString();
+                LogExecution(script.Id, string.Empty, Models.LogLevel.Error, $"Script execution failed: {ex.Message}");
+                _logger.LogError(ex, "Error executing script {ScriptId}", script.Id);
+            }
+            finally
+            {
+                OnStateChanged(state);
+            }
+        }
+
+        private async Task<bool> ExecuteSingleIterationAsync(AutomationScript script, ScriptExecutionState state, CancellationToken cancellationToken)
+        {
+            try
+            {
                 var currentStepIndex = 0;
-                var maxIterations = 1000; // Prevent infinite loops
+                var maxIterations = 1000; // Prevent infinite loops within single iteration
                 var iterations = 0;
 
                 while (currentStepIndex < script.Steps.Count && iterations < maxIterations && !cancellationToken.IsCancellationRequested)
@@ -279,24 +394,12 @@ namespace AutomationTool.Services
                     iterations++;
                 }
 
-                // Script completed
-                state.Status = ExecutionStatus.Completed.ToString();
-                LogExecution(script.Id, string.Empty, Models.LogLevel.Info, "Script execution completed");
-            }
-            catch (OperationCanceledException)
-            {
-                state.Status = ExecutionStatus.Stopped.ToString();
-                LogExecution(script.Id, string.Empty, Models.LogLevel.Info, "Script execution cancelled");
+                return true; // Successfully completed iteration
             }
             catch (Exception ex)
             {
-                state.Status = ExecutionStatus.Error.ToString();
-                LogExecution(script.Id, string.Empty, Models.LogLevel.Error, $"Script execution failed: {ex.Message}");
-                _logger.LogError(ex, "Error executing script {ScriptId}", script.Id);
-            }
-            finally
-            {
-                OnStateChanged(state);
+                LogExecution(script.Id, string.Empty, Models.LogLevel.Error, $"Error in script iteration: {ex.Message}");
+                return false;
             }
         }
 
@@ -380,8 +483,8 @@ namespace AutomationTool.Services
         {
             try
             {
-                var templateImageId = condition.Parameters.GetValueOrDefault("templateImageId")?.ToString();
-                var threshold = Convert.ToDouble(condition.Parameters.GetValueOrDefault("threshold", 0.8));
+                var templateImageId = GetParameterValue<string>(condition.Parameters, "templateImageId");
+                var threshold = GetParameterValue<double>(condition.Parameters, "threshold", 0.8);
 
                 if (string.IsNullOrEmpty(templateImageId))
                 {
@@ -413,7 +516,7 @@ namespace AutomationTool.Services
 
         private async Task<bool> EvaluateTimeoutConditionAsync(ScriptCondition condition, ScriptExecutionState state, CancellationToken cancellationToken)
         {
-            var timeoutMs = Convert.ToInt32(condition.Parameters.GetValueOrDefault("timeoutMs", 5000));
+            var timeoutMs = GetParameterValue<int>(condition.Parameters, "timeoutMs", 5000);
             var elapsedMs = (DateTime.Now - state.StartTime).TotalMilliseconds;
             
             return elapsedMs >= timeoutMs;
@@ -476,8 +579,8 @@ namespace AutomationTool.Services
 
         private async Task ExecuteClickActionAsync(ScriptAction action, ScriptExecutionState state, CancellationToken cancellationToken)
         {
-            var x = Convert.ToInt32(action.Parameters.GetValueOrDefault("x", 0));
-            var y = Convert.ToInt32(action.Parameters.GetValueOrDefault("y", 0));
+            var x = GetParameterValue<int>(action.Parameters, "x", 0);
+            var y = GetParameterValue<int>(action.Parameters, "y", 0);
             
             await _automationEngine.ClickAsync(x, y);
             LogExecution(state.ScriptId, string.Empty, Models.LogLevel.Info, $"Clicked at ({x}, {y})");
@@ -485,8 +588,8 @@ namespace AutomationTool.Services
 
         private async Task ExecuteDoubleClickActionAsync(ScriptAction action, ScriptExecutionState state, CancellationToken cancellationToken)
         {
-            var x = Convert.ToInt32(action.Parameters.GetValueOrDefault("x", 0));
-            var y = Convert.ToInt32(action.Parameters.GetValueOrDefault("y", 0));
+            var x = GetParameterValue<int>(action.Parameters, "x", 0);
+            var y = GetParameterValue<int>(action.Parameters, "y", 0);
             
             await _automationEngine.DoubleClickAsync(new Point(x, y));
             LogExecution(state.ScriptId, string.Empty, Models.LogLevel.Info, $"Double-clicked at ({x}, {y})");
@@ -494,8 +597,8 @@ namespace AutomationTool.Services
 
         private async Task ExecuteRightClickActionAsync(ScriptAction action, ScriptExecutionState state, CancellationToken cancellationToken)
         {
-            var x = Convert.ToInt32(action.Parameters.GetValueOrDefault("x", 0));
-            var y = Convert.ToInt32(action.Parameters.GetValueOrDefault("y", 0));
+            var x = GetParameterValue<int>(action.Parameters, "x", 0);
+            var y = GetParameterValue<int>(action.Parameters, "y", 0);
             
             await _automationEngine.RightClickAsync(new Point(x, y));
             LogExecution(state.ScriptId, string.Empty, Models.LogLevel.Info, $"Right-clicked at ({x}, {y})");
@@ -503,7 +606,7 @@ namespace AutomationTool.Services
 
         private async Task ExecuteTypeActionAsync(ScriptAction action, ScriptExecutionState state, CancellationToken cancellationToken)
         {
-            var text = action.Parameters.GetValueOrDefault("text")?.ToString() ?? string.Empty;
+            var text = GetParameterValue<string>(action.Parameters, "text", string.Empty);
             
             await _automationEngine.TypeTextAsync(text);
             LogExecution(state.ScriptId, string.Empty, Models.LogLevel.Info, $"Typed text: {text}");
@@ -511,7 +614,7 @@ namespace AutomationTool.Services
 
         private async Task ExecuteKeyPressActionAsync(ScriptAction action, ScriptExecutionState state, CancellationToken cancellationToken)
         {
-            var keys = action.Parameters.GetValueOrDefault("keys")?.ToString() ?? string.Empty;
+            var keys = GetParameterValue<string>(action.Parameters, "keys", string.Empty);
             
             await _automationEngine.SendKeysAsync(keys);
             LogExecution(state.ScriptId, string.Empty, Models.LogLevel.Info, $"Sent keys: {keys}");
@@ -519,7 +622,7 @@ namespace AutomationTool.Services
 
         private async Task ExecuteWaitActionAsync(ScriptAction action, ScriptExecutionState state, CancellationToken cancellationToken)
         {
-            var milliseconds = Convert.ToInt32(action.Parameters.GetValueOrDefault("milliseconds", 1000));
+            var milliseconds = GetParameterValue<int>(action.Parameters, "milliseconds", 1000);
             
             await _automationEngine.WaitAsync(milliseconds);
             LogExecution(state.ScriptId, string.Empty, Models.LogLevel.Info, $"Waited {milliseconds}ms");
@@ -527,7 +630,7 @@ namespace AutomationTool.Services
 
         private async Task ExecuteScreenshotActionAsync(ScriptAction action, ScriptExecutionState state, CancellationToken cancellationToken)
         {
-            var fileName = action.Parameters.GetValueOrDefault("fileName")?.ToString() ?? $"script_screenshot_{DateTime.Now:yyyyMMdd_HHmmss}";
+            var fileName = GetParameterValue<string>(action.Parameters, "fileName", $"script_screenshot_{DateTime.Now:yyyyMMdd_HHmmss}");
             
             var screenData = await _screenshotService.CaptureFullScreenAsync();
             var filePath = await _screenshotService.SaveScreenshotAsync(screenData, fileName);
@@ -537,7 +640,7 @@ namespace AutomationTool.Services
 
         private async Task<StepExecutionResult> ExecuteWaitStepAsync(ScriptStep step, ScriptExecutionState state, CancellationToken cancellationToken)
         {
-            var milliseconds = Convert.ToInt32(step.Parameters.GetValueOrDefault("milliseconds", 1000));
+            var milliseconds = GetParameterValue<int>(step.Parameters, "milliseconds", 1000);
             await Task.Delay(milliseconds, cancellationToken);
             
             return new StepExecutionResult { Success = true };
@@ -545,13 +648,49 @@ namespace AutomationTool.Services
 
         private async Task<StepExecutionResult> ExecuteJumpStepAsync(ScriptStep step, ScriptExecutionState state, CancellationToken cancellationToken)
         {
-            var targetStepId = step.Parameters.GetValueOrDefault("targetStepId")?.ToString();
+            var targetStepId = GetParameterValue<string>(step.Parameters, "targetStepId", string.Empty);
             
             return new StepExecutionResult 
             { 
                 Success = true, 
                 NextStepId = targetStepId 
             };
+        }
+
+        private T GetParameterValue<T>(Dictionary<string, object> parameters, string key, T defaultValue = default(T)!)
+        {
+            if (!parameters.TryGetValue(key, out var value) || value == null)
+                return defaultValue;
+
+            // Handle JsonElement case (when deserializing from JSON)
+            if (value is System.Text.Json.JsonElement jsonElement)
+            {
+                try
+                {
+                    if (typeof(T) == typeof(string))
+                        return (T)(object)jsonElement.GetString();
+                    if (typeof(T) == typeof(int))
+                        return (T)(object)jsonElement.GetInt32();
+                    if (typeof(T) == typeof(double))
+                        return (T)(object)jsonElement.GetDouble();
+                    if (typeof(T) == typeof(bool))
+                        return (T)(object)jsonElement.GetBoolean();
+                }
+                catch
+                {
+                    return defaultValue;
+                }
+            }
+
+            // Handle direct conversion
+            try
+            {
+                return (T)Convert.ChangeType(value, typeof(T));
+            }
+            catch
+            {
+                return defaultValue;
+            }
         }
 
         private void LogExecution(string scriptId, string stepId, Models.LogLevel level, string message)

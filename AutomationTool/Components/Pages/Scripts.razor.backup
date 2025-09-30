@@ -4,18 +4,12 @@
 @using AutomationTool.Models
 @inject IScriptStorageService ScriptStorage
 @inject IScriptExecutionService ScriptExecution
-@inject IScreenshotService ScreenshotService
 @inject NavigationManager Navigation
 @inject ILogger<Scripts> _logger
 
 <PageTitle>Script Management</PageTitle>
 
 <h1>📝 Script Management</h1>
-
-<!-- Hotkey Information -->
-<div class="alert alert-info mb-3" role="alert">
-    <small><strong>⌨️ Global Hotkeys:</strong> <kbd>F9</kbd> Pause/Resume • <kbd>F10</kbd> Stop • <kbd>F11</kbd> Toggle Toolbar - Works anytime during script execution</small>
-</div>
 
 <div class="row">
     <div class="col-md-8">
@@ -58,14 +52,6 @@
                                             <td>@script.Description</td>
                                             <td>
                                                 <span class="badge bg-primary">@script.Steps.Count</span>
-                                                @if (script.IsInfiniteRepeat)
-                                                {
-                                                    <span class="badge bg-info ms-1">♾️</span>
-                                                }
-                                                else if (script.RepeatCount > 1)
-                                                {
-                                                    <span class="badge bg-secondary ms-1">@script.RepeatCount x</span>
-                                                }
                                             </td>
                                             <td>@script.ModifiedAt.ToString("MM/dd/yyyy HH:mm")</td>
                                             <td>
@@ -140,55 +126,6 @@
                         </div>
                     </div>
 
-                    <!-- Repeat Configuration -->
-                    <div class="card mb-4">
-                        <div class="card-header">
-                            <h6 class="mb-0">🔄 Repeat Configuration</h6>
-                        </div>
-                        <div class="card-body">
-                            <div class="row">
-                                <div class="col-md-4">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" @bind="selectedScript.IsInfiniteRepeat" id="infiniteRepeat">
-                                        <label class="form-check-label" for="infiniteRepeat">
-                                            <strong>♾️ Infinite Repeat</strong>
-                                        </label>
-                                    </div>
-                                    <small class="text-muted">Run script continuously until manually stopped</small>
-                                </div>
-                                <div class="col-md-4">
-                                    <label class="form-label">Repeat Count</label>
-                                    <input type="number" class="form-control" @bind="selectedScript.RepeatCount" 
-                                           min="1" max="10000" disabled="@selectedScript.IsInfiniteRepeat"
-                                           placeholder="Number of repetitions">
-                                    <small class="text-muted">How many times to run the script</small>
-                                </div>
-                                <div class="col-md-4">
-                                    <label class="form-label">Delay Between Repeats (ms)</label>
-                                    <input type="number" class="form-control" @bind="selectedScript.DelayBetweenRepeats" 
-                                           min="0" max="300000" placeholder="0">
-                                    <small class="text-muted">Wait time between script repetitions</small>
-                                </div>
-                            </div>
-                            <div class="mt-2">
-                                @if (selectedScript.IsInfiniteRepeat)
-                                {
-                                    <div class="alert alert-info mb-0" role="alert">
-                                        <i class="bi bi-info-circle"></i>
-                                        <strong>Infinite Mode:</strong> Script will run continuously. Use the Stop button in Execution page to halt execution.
-                                    </div>
-                                }
-                                else
-                                {
-                                    <div class="alert alert-light mb-0" role="alert">
-                                        <i class="bi bi-play-circle"></i>
-                                        <strong>Finite Mode:</strong> Script will run @selectedScript.RepeatCount time@(selectedScript.RepeatCount == 1 ? "" : "s") then stop automatically.
-                                    </div>
-                                }
-                            </div>
-                        </div>
-                    </div>
-
                     <!-- Steps Section -->
                     <div class="mb-4">
                         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -225,80 +162,7 @@
                                                     </div>
                                                 </div>
                                                 
-                                                @if (step.Type == "condition")
-                                                {
-                                                    step.Conditions ??= new List<ScriptCondition>();
-                                                    step.Actions ??= new List<ScriptAction>();
-                                                    <div class="mt-2">
-                                                        <div class="d-flex justify-content-between align-items-center mb-2">
-                                                            <label class="form-label mb-0">Conditions</label>
-                                                            <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => AddCondition(step)">
-                                                                ➕ Add Condition
-                                                            </button>
-                                                        </div>
-
-                                                        @if (step.Conditions.Any())
-                                                        {
-                                                            foreach (var condition in step.Conditions)
-                                                            {
-                                                                <div class="border rounded p-2 bg-light mb-2">
-                                                                    <div class="row g-2 align-items-center">
-                                                                        <div class="col-md-3">
-                                                                            <label class="form-label small mb-1">Type</label>
-                                                                            <select class="form-select form-select-sm" value="@condition.Type" @onchange="(e) => OnConditionTypeChanged(step, condition, e.Value?.ToString() ?? string.Empty)">
-                                                                                <option value="image_found">Image Found</option>
-                                                                                <option value="image_not_found">Image Not Found</option>
-                                                                                <option value="timeout">Timeout</option>
-                                                                                <option value="always">Always</option>
-                                                                                <option value="never">Never</option>
-                                                                                <option value="variable_equals">Variable Equals</option>
-                                                                                <option value="variable_not_equals">Variable Not Equals</option>
-                                                                            </select>
-                                                                        </div>
-                                                                        <div class="col-md-3">
-                                                                            <label class="form-label small mb-1">Operator</label>
-                                                                            <select class="form-select form-select-sm" @bind="condition.Operator" @bind:event="onchange">
-                                                                                <option value="AND">AND</option>
-                                                                                <option value="OR">OR</option>
-                                                                            </select>
-                                                                        </div>
-                                                                        <div class="col-md-5">
-                                                                            @RenderConditionParameters(step, condition)
-                                                                        </div>
-                                                                        <div class="col-md-1 text-end">
-                                                                            <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => RemoveCondition(step, condition)">🗑️</button>
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                            }
-                                                        }
-                                                        else
-                                                        {
-                                                            <div class="alert alert-light py-2 mb-0" role="alert">
-                                                                <small>No conditions configured yet. Click "Add Condition" to begin.</small>
-                                                            </div>
-                                                        }
-                                                    </div>
-
-                                                    <div class="mt-3">
-                                                        <label class="form-label">Success Actions</label>
-                                                        <div class="border rounded p-2 bg-light">
-                                                            @RenderConditionSuccessActions(step)
-                                                        </div>
-                                                    </div>
-
-                                                    <div class="mt-2">
-                                                        <label class="form-label">Else Step (Optional)</label>
-                                                        <select class="form-select form-select-sm" @bind="step.ElseStepId">
-                                                            <option value="">-- Continue to next step --</option>
-                                                            @foreach (var otherStep in selectedScript.Steps)
-                                                            {
-                                                                <option value="@otherStep.Id">@otherStep.Name</option>
-                                                            }
-                                                        </select>
-                                                    </div>
-                                                }
-                                                else if (step.Type == "action")
+                                                @if (step.Type == "action")
                                                 {
                                                     <div class="mt-2">
                                                         <label class="form-label">Actions</label>
@@ -321,16 +185,9 @@
                                                                         @if (action.Type == "click" || action.Type == "double_click" || action.Type == "right_click")
                                                                         {
                                                                             <input type="number" class="form-control form-control-sm me-1" style="width: 80px;" 
-                                                                                   placeholder="X" 
-                                                                                   value="@(action.Parameters.GetValueOrDefault("x")?.ToString() ?? "")"
-                                                                                   @onchange="(e) => UpdateActionParameterX(action, e.Value)">
-                                                                            <input type="number" class="form-control form-control-sm me-1" style="width: 80px;" 
-                                                                                   placeholder="Y" 
-                                                                                   value="@(action.Parameters.GetValueOrDefault("y")?.ToString() ?? "")"
-                                                                                   @onchange="(e) => UpdateActionParameterY(action, e.Value)">
-                                                                            <button class="btn btn-sm btn-outline-primary me-2" @onclick="() => StartPositionPicker(action)" title="Pick position by clicking on screen">
-                                                                                📍 Pick
-                                                                            </button>
+                                                                                   placeholder="X" @onchange="(e) => UpdateActionParameterX(action, e.Value)">
+                                                                            <input type="number" class="form-control form-control-sm me-2" style="width: 80px;" 
+                                                                                   placeholder="Y" @onchange="(e) => UpdateActionParameterY(action, e.Value)">
                                                                         }
                                                                         else if (action.Type == "type")
                                                                         {
@@ -344,10 +201,8 @@
                                                                         }
                                                                         else if (action.Type == "wait")
                                                                         {
-                                                                            var waitValue = action.Parameters.ContainsKey("milliseconds") ? action.Parameters["milliseconds"] : 0;
-                                                                            <input type="number" class="form-control form-control-sm me-2" style="width: 100px;"
-                                                                                   value="@waitValue"
-                                                                                   placeholder="ms" @oninput="(e) => UpdateActionParameterMs(action, e.Value)">
+                                                                            <input type="number" class="form-control form-control-sm me-2" style="width: 100px;" 
+                                                                                   placeholder="ms" @onchange="(e) => UpdateActionParameterMs(action, e.Value)">
                                                                         }
                                                                         else if (action.Type == "screenshot")
                                                                         {
@@ -372,12 +227,12 @@
                                                                     <span class="visually-hidden">Toggle Dropdown</span>
                                                                 </button>
                                                                 <ul class="dropdown-menu">
-                                                                    <li><button class="dropdown-item" type="button" @onclick="() => AddClickAction(step)">🖱️ Click</button></li>
-                                                                    <li><button class="dropdown-item" type="button" @onclick="() => AddTypeAction(step)">⌨️ Type Text</button></li>
-                                                                    <li><button class="dropdown-item" type="button" @onclick="() => AddKeyPressAction(step)">🔠 Key Press</button></li>
-                                                                    <li><button class="dropdown-item" type="button" @onclick="() => AddWaitAction(step)">⏱️ Wait</button></li>
+                                                                    <li><a class="dropdown-item" href="#" @onclick="() => AddActionOfType(step, &quot;click&quot;)" @onclick:preventDefault="true">🖱️ Click</a></li>
+                                                                    <li><a class="dropdown-item" href="#" @onclick="() => AddActionOfType(step, &quot;type&quot;)" @onclick:preventDefault="true">⌨️ Type Text</a></li>
+                                                                    <li><a class="dropdown-item" href="#" @onclick="() => AddActionOfType(step, &quot;key_press&quot;)" @onclick:preventDefault="true">🔠 Key Press</a></li>
+                                                                    <li><a class="dropdown-item" href="#" @onclick="() => AddActionOfType(step, &quot;wait&quot;)" @onclick:preventDefault="true">⏱️ Wait</a></li>
                                                                     <li><hr class="dropdown-divider"></li>
-                                                                    <li><button class="dropdown-item" type="button" @onclick="() => AddScreenshotAction(step)">📷 Take Screenshot</button></li>
+                                                                    <li><a class="dropdown-item" href="#" @onclick="() => AddActionOfType(step, &quot;screenshot&quot;)" @onclick:preventDefault="true">📷 Take Screenshot</a></li>
                                                                 </ul>
                                                             </div>
                                                         </div>
@@ -461,11 +316,6 @@
                         <strong>Name:</strong> @(string.IsNullOrEmpty(selectedScript.Name) ? "Untitled Script" : selectedScript.Name)<br>
                         <strong>Steps:</strong> @selectedScript.Steps.Count<br>
                         <strong>Actions:</strong> @selectedScript.Steps.SelectMany(s => s.Actions).Count()<br>
-                        <strong>Repeats:</strong> @(selectedScript.IsInfiniteRepeat ? "♾️ Infinite" : $"{selectedScript.RepeatCount}x")<br>
-                        @if (selectedScript.DelayBetweenRepeats > 0)
-                        {
-                            <text><strong>Delay:</strong> @selectedScript.DelayBetweenRepeats ms<br></text>
-                        }
                         <strong>Modified:</strong> @selectedScript.ModifiedAt.ToString("MM/dd/yyyy HH:mm")
                     </div>
                 </div>
@@ -597,92 +447,6 @@
     <div class="modal-backdrop fade show"></div>
 }
 
-@* Capture Template Modal *@
-@if (showCaptureTemplateModal && capturedTemplateData != null)
-{
-    <div class="modal fade show" style="display: block; z-index: 1070;" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">📸 Save Captured Template</h5>
-                    <button type="button" class="btn-close" @onclick="CloseCaptureTemplateModal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="text-center mb-3">
-                        <img src="data:image/png;base64,@Convert.ToBase64String(capturedTemplateData)" 
-                             class="img-fluid rounded border" 
-                             style="max-height: 200px; background-color: #f8f9fa;" 
-                             alt="Captured template preview">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Template Name *</label>
-                        <input type="text" class="form-control" @bind="newTemplateName" placeholder="Enter template name">
-                        <small class="text-muted">Give this template a descriptive name</small>
-                    </div>
-                    <div class="card bg-light border-0">
-                        <div class="card-body py-2">
-                            <div class="row small">
-                                <div class="col-6">
-                                    <strong>Size:</strong> @capturedRegion.Width × @capturedRegion.Height
-                                </div>
-                                <div class="col-6">
-                                    <strong>Position:</strong> (@capturedRegion.X, @capturedRegion.Y)
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" @onclick="CloseCaptureTemplateModal">Cancel</button>
-                    <button type="button" class="btn btn-success" @onclick="SaveCapturedTemplate">
-                        💾 Save Template
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="modal-backdrop fade show" style="z-index: 1065;"></div>
-}
-
-@* Position Picker Modal *@
-@if (showPositionPicker)
-{
-    <div class="modal fade show" style="display: block; z-index: 1060;" tabindex="-1">
-        <div class="modal-dialog modal-sm">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">📍 Pick Screen Position</h5>
-                    <button type="button" class="btn-close" @onclick="CancelPositionPicker"></button>
-                </div>
-                <div class="modal-body text-center">
-                    <div class="mb-3">
-                        <i class="bi bi-cursor-click" style="font-size: 3rem; color: #0d6efd;"></i>
-                    </div>
-                    <p class="mb-3">Click anywhere on your screen to select the position for this click action.</p>
-                    <div class="d-grid gap-2">
-                        <button class="btn btn-primary" @onclick="StartScreenPositionSelection">
-                            🖱️ Start Position Selection
-                        </button>
-                        <button class="btn btn-secondary" @onclick="CancelPositionPicker">
-                            Cancel
-                        </button>
-                    </div>
-                    @if (isSelectingPosition)
-                    {
-                        <div class="mt-3">
-                            <div class="spinner-border spinner-border-sm text-primary" role="status">
-                                <span class="visually-hidden">Selecting...</span>
-                            </div>
-                            <p class="mt-2 small text-muted">Click anywhere on screen to select position...</p>
-                        </div>
-                    }
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="modal-backdrop fade show" style="z-index: 1055;"></div>
-}
-
 @code {
     private List<AutomationScript> scripts = new();
     private List<TemplateImage> templateImages = new();
@@ -691,17 +455,8 @@
     private bool isSaving = false;
     private string statusMessage = string.Empty;
     private string statusClass = string.Empty;
-    private bool showPositionPicker = false;
-    private bool isSelectingPosition = false;
-    private ScriptAction? currentActionForPositionPick;
     private bool showImageSelectionModal = false;
     private TemplateImage? selectedTemplateForScript;
-    private bool showCaptureTemplateModal = false;
-    private bool isCapturingTemplate = false;
-    private string newTemplateName = string.Empty;
-    private byte[]? capturedTemplateData;
-    private System.Drawing.Rectangle capturedRegion;
-    private ScriptCondition? currentConditionForTemplate;
 
     protected override async Task OnInitializedAsync()
     {
@@ -721,10 +476,7 @@
         {
             Name = "New Script",
             Description = "Enter script description",
-            Steps = new List<ScriptStep>(),
-            RepeatCount = 1,
-            IsInfiniteRepeat = false,
-            DelayBetweenRepeats = 0
+            Steps = new List<ScriptStep>()
         };
         isEditing = false;
     }
@@ -857,7 +609,6 @@
             Parameters = new Dictionary<string, object>()
         };
         
-        step.Actions ??= new List<ScriptAction>();
         step.Actions.Add(newAction);
     }
 
@@ -892,39 +643,13 @@
                 break;
         }
         
-        step.Actions ??= new List<ScriptAction>();
         step.Actions.Add(newAction);
         StateHasChanged();
     }
 
-    private void AddClickAction(ScriptStep step)
-    {
-        AddActionOfType(step, "click");
-    }
-
-    private void AddTypeAction(ScriptStep step)
-    {
-        AddActionOfType(step, "type");
-    }
-
-    private void AddKeyPressAction(ScriptStep step)
-    {
-        AddActionOfType(step, "key_press");
-    }
-
-    private void AddWaitAction(ScriptStep step)
-    {
-        AddActionOfType(step, "wait");
-    }
-
-    private void AddScreenshotAction(ScriptStep step)
-    {
-        AddActionOfType(step, "screenshot");
-    }
-
     private void RemoveAction(ScriptStep step, ScriptAction action)
     {
-        step.Actions?.Remove(action);
+        step.Actions.Remove(action);
     }
 
     private void UpdateActionParameter(ScriptAction action, string key, object? value)
@@ -957,18 +682,7 @@
 
     private void UpdateActionParameterMs(ScriptAction action, object? value)
     {
-        if (value == null) return;
-
-        if (value is int intValue)
-        {
-            UpdateActionParameter(action, "milliseconds", intValue);
-            return;
-        }
-
-        if (int.TryParse(value.ToString(), out var parsed))
-        {
-            UpdateActionParameter(action, "milliseconds", parsed);
-        }
+        UpdateActionParameter(action, "milliseconds", value);
     }
 
     private void UpdateActionParameterFileName(ScriptAction action, object? value)
@@ -1029,7 +743,6 @@
             }
         };
         
-        step.Actions ??= new List<ScriptAction>();
         step.Actions.Add(clickAction);
     }
 
@@ -1287,67 +1000,6 @@
         statusClass = string.Empty;
     }
 
-    private void StartPositionPicker(ScriptAction action)
-    {
-        currentActionForPositionPick = action;
-        showPositionPicker = true;
-        isSelectingPosition = false;
-        StateHasChanged();
-    }
-
-    private void CancelPositionPicker()
-    {
-        showPositionPicker = false;
-        isSelectingPosition = false;
-        currentActionForPositionPick = null;
-        StateHasChanged();
-    }
-
-    private async Task StartScreenPositionSelection()
-    {
-        if (currentActionForPositionPick == null) return;
-
-        try
-        {
-            isSelectingPosition = true;
-            StateHasChanged();
-
-            // Use the desktop region selector to pick a single point
-            var selectedRegion = await ScreenshotService.SelectDesktopRegionAsync();
-
-            if (selectedRegion.HasValue)
-            {
-                var region = selectedRegion.Value;
-                // Use the center of the selected region as the click point
-                var centerX = region.X + region.Width / 2;
-                var centerY = region.Y + region.Height / 2;
-
-                // Update the action parameters
-                currentActionForPositionPick.Parameters["x"] = centerX;
-                currentActionForPositionPick.Parameters["y"] = centerY;
-
-                ShowStatus($"Position selected: ({centerX}, {centerY})", "alert-success");
-                
-                // Close the modal
-                CancelPositionPicker();
-            }
-            else
-            {
-                ShowStatus("Position selection cancelled", "alert-info");
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "Error during position selection");
-            ShowStatus($"Error selecting position: {ex.Message}", "alert-danger");
-        }
-        finally
-        {
-            isSelectingPosition = false;
-            StateHasChanged();
-        }
-    }
-
     private void UseTemplateInNewStep(TemplateImage template)
     {
         if (selectedScript == null)
@@ -1462,495 +1114,6 @@
         CloseImageSelectionModal();
         
         ShowStatus($"Created new script using template '{template.Name}'. You can now edit and save it.", "alert-success");
-        StateHasChanged();
-    }
-
-    private void AddCondition(ScriptStep step)
-    {
-        step.Conditions ??= new List<ScriptCondition>();
-
-        var newCondition = new ScriptCondition
-        {
-            Type = "always",
-            Operator = "AND",
-            Parameters = new Dictionary<string, object>()
-        };
-
-        switch (newCondition.Type)
-        {
-            case "image_found":
-            case "image_not_found":
-                newCondition.Parameters["templateImageId"] = string.Empty;
-                newCondition.Parameters["threshold"] = 0.8;
-                break;
-            case "timeout":
-                newCondition.Parameters["milliseconds"] = 5000;
-                break;
-            case "variable_equals":
-            case "variable_not_equals":
-                newCondition.Parameters["variable"] = string.Empty;
-                newCondition.Parameters["value"] = string.Empty;
-                break;
-        }
-
-        step.Conditions.Add(newCondition);
-    }
-
-    private void RemoveCondition(ScriptStep step, ScriptCondition condition)
-    {
-        step.Conditions?.Remove(condition);
-    }
-
-    private RenderFragment RenderConditionParameters(ScriptStep step, ScriptCondition condition) => builder =>
-    {
-        int seq = 0;
-        var type = condition.Type?.ToLower() ?? "";
-
-        switch (type)
-        {
-            case "image_found":
-            case "image_not_found":
-                builder.OpenElement(seq++, "div");
-                builder.AddAttribute(seq++, "class", "input-group input-group-sm mb-1");
-                builder.OpenElement(seq++, "span");
-                builder.AddAttribute(seq++, "class", "input-group-text");
-                builder.AddContent(seq++, "Template");
-                builder.CloseElement();
-                builder.OpenElement(seq++, "select");
-                builder.AddAttribute(seq++, "class", "form-select form-select-sm");
-                builder.AddAttribute(seq++, "value", condition.Parameters.GetValueOrDefault("templateImageId")?.ToString() ?? string.Empty);
-                builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => UpdateConditionParameter(step, condition, "templateImageId", e.Value)));
-                builder.OpenElement(seq++, "option");
-                builder.AddAttribute(seq++, "value", string.Empty);
-                builder.AddContent(seq++, "-- Select Template --");
-                builder.CloseElement();
-                foreach (var template in templateImages)
-                {
-                    builder.OpenElement(seq++, "option");
-                    builder.AddAttribute(seq++, "value", template.Id);
-                    builder.AddContent(seq++, template.Name);
-                    builder.CloseElement();
-                }
-                builder.CloseElement();
-                builder.OpenElement(seq++, "button");
-                builder.AddAttribute(seq++, "type", "button");
-                builder.AddAttribute(seq++, "class", "btn btn-outline-success btn-sm");
-                builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => StartCaptureTemplate(condition)));
-                builder.AddAttribute(seq++, "title", "Capture new template from screen");
-                builder.AddContent(seq++, "📸");
-                builder.CloseElement();
-                builder.CloseElement();
-                
-                builder.OpenElement(seq++, "div");
-                builder.AddAttribute(seq++, "class", "input-group input-group-sm mb-1");
-                builder.OpenElement(seq++, "span");
-                builder.AddAttribute(seq++, "class", "input-group-text");
-                builder.AddContent(seq++, "Threshold");
-                builder.CloseElement();
-                builder.OpenElement(seq++, "input");
-                builder.AddAttribute(seq++, "type", "number");
-                builder.AddAttribute(seq++, "step", "0.01");
-                builder.AddAttribute(seq++, "min", "0");
-                builder.AddAttribute(seq++, "max", "1");
-                builder.AddAttribute(seq++, "class", "form-control form-control-sm");
-                builder.AddAttribute(seq++, "value", condition.Parameters.GetValueOrDefault("threshold")?.ToString() ?? "0.8");
-                builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => UpdateConditionParameter(step, condition, "threshold", e.Value)));
-                builder.CloseElement();
-                builder.CloseElement();
-                break;
-            case "timeout":
-                builder.OpenElement(seq++, "div");
-                builder.AddAttribute(seq++, "class", "input-group input-group-sm mb-1");
-                builder.OpenElement(seq++, "span");
-                builder.AddAttribute(seq++, "class", "input-group-text");
-                builder.AddContent(seq++, "Timeout (ms)");
-                builder.CloseElement();
-                builder.OpenElement(seq++, "input");
-                builder.AddAttribute(seq++, "type", "number");
-                builder.AddAttribute(seq++, "class", "form-control form-control-sm");
-                builder.AddAttribute(seq++, "value", condition.Parameters.GetValueOrDefault("timeoutMs")?.ToString() ?? "5000");
-                builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => UpdateConditionParameter(step, condition, "timeoutMs", e.Value)));
-                builder.CloseElement();
-                builder.CloseElement();
-                break;
-            case "variable_equals":
-            case "variable_not_equals":
-                builder.OpenElement(seq++, "div");
-                builder.AddAttribute(seq++, "class", "row g-1");
-                builder.OpenElement(seq++, "div");
-                builder.AddAttribute(seq++, "class", "col-6");
-                builder.OpenElement(seq++, "input");
-                builder.AddAttribute(seq++, "type", "text");
-                builder.AddAttribute(seq++, "placeholder", "Variable name");
-                builder.AddAttribute(seq++, "class", "form-control form-control-sm");
-                builder.AddAttribute(seq++, "value", condition.Parameters.GetValueOrDefault("variable")?.ToString() ?? string.Empty);
-                builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => UpdateConditionParameter(step, condition, "variable", e.Value)));
-                builder.CloseElement();
-                builder.CloseElement();
-                builder.OpenElement(seq++, "div");
-                builder.AddAttribute(seq++, "class", "col-6");
-                builder.OpenElement(seq++, "input");
-                builder.AddAttribute(seq++, "type", "text");
-                builder.AddAttribute(seq++, "placeholder", "Expected value");
-                builder.AddAttribute(seq++, "class", "form-control form-control-sm");
-                builder.AddAttribute(seq++, "value", condition.Parameters.GetValueOrDefault("value")?.ToString() ?? string.Empty);
-                builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => UpdateConditionParameter(step, condition, "value", e.Value)));
-                builder.CloseElement();
-                builder.CloseElement();
-                builder.CloseElement();
-                break;
-            default:
-                builder.OpenElement(seq++, "div");
-                builder.AddAttribute(seq++, "class", "text-muted small");
-                builder.AddContent(seq++, "No parameters required for this condition type.");
-                builder.CloseElement();
-                break;
-        }
-    };
-
-    private void UpdateConditionParameter(ScriptStep step, ScriptCondition condition, string key, object? value)
-    {
-        if (value == null) return;
-
-        condition.Parameters ??= new Dictionary<string, object>();
-
-        if (value is ChangeEventArgs changeEvent)
-        {
-            value = changeEvent.Value;
-        }
-
-        if (value is string strValue && double.TryParse(strValue, out var doubleValue) && key == "threshold")
-        {
-            condition.Parameters[key] = doubleValue;
-        }
-        else if (value is string strVal && int.TryParse(strVal, out var intValue) && (key == "milliseconds" || key == "timeoutMs"))
-        {
-            condition.Parameters[key] = intValue;
-        }
-        else
-        {
-            condition.Parameters[key] = value ?? string.Empty;
-        }
-    }
-
-    private void OnConditionTypeChanged(ScriptStep step, ScriptCondition condition, string newType)
-    {
-        if (condition.Type == newType) return;
-
-        condition.Type = newType;
-        condition.Parameters = new Dictionary<string, object>();
-
-        switch (newType)
-        {
-            case "image_found":
-            case "image_not_found":
-                condition.Parameters["templateImageId"] = string.Empty;
-                condition.Parameters["threshold"] = 0.8;
-                break;
-            case "timeout":
-                condition.Parameters["timeoutMs"] = 5000;
-                break;
-            case "variable_equals":
-            case "variable_not_equals":
-                condition.Parameters["variable"] = string.Empty;
-                condition.Parameters["value"] = string.Empty;
-                break;
-        }
-    }
-
-    private RenderFragment RenderConditionSuccessActions(ScriptStep step) => builder =>
-    {
-        step.Actions ??= new List<ScriptAction>();
-        int seq = 0;
-        if (!step.Actions.Any())
-        {
-            builder.OpenElement(seq++, "div");
-            builder.AddAttribute(seq++, "class", "alert alert-light py-2 mb-2");
-            builder.AddAttribute(seq++, "role", "alert");
-            builder.AddContent(seq++, (RenderFragment)(builder2 =>
-            {
-                int innerSeq = 0;
-                builder2.AddContent(innerSeq++, "No actions configured yet.");
-            }));
-            builder.CloseElement();
-        }
-        else
-        {
-            foreach (var action in step.Actions)
-            {
-                builder.OpenElement(seq++, "div");
-                builder.AddAttribute(seq++, "class", "mb-2");
-                builder.AddContent(seq++, (RenderFragment)(builder2 =>
-                {
-                    int innerSeq = 0;
-                    builder2.OpenElement(innerSeq++, "div");
-                    builder2.AddAttribute(innerSeq++, "class", "d-flex align-items-center gap-2");
-                    builder2.OpenElement(innerSeq++, "select");
-                    builder2.AddAttribute(innerSeq++, "class", "form-select form-select-sm");
-                    builder2.AddAttribute(innerSeq++, "style", "width: auto;");
-                    builder2.AddAttribute(innerSeq++, "value", action.Type);
-                    builder2.AddAttribute(innerSeq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => UpdateActionType(step, action, e.Value?.ToString() ?? "")));
-                    builder2.OpenElement(innerSeq++, "option");
-                    builder2.AddAttribute(innerSeq++, "value", "click");
-                    builder2.AddContent(innerSeq++, "Click");
-                    builder2.CloseElement();
-                    builder2.OpenElement(innerSeq++, "option");
-                    builder2.AddAttribute(innerSeq++, "value", "double_click");
-                    builder2.AddContent(innerSeq++, "Double Click");
-                    builder2.CloseElement();
-                    builder2.OpenElement(innerSeq++, "option");
-                    builder2.AddAttribute(innerSeq++, "value", "right_click");
-                    builder2.AddContent(innerSeq++, "Right Click");
-                    builder2.CloseElement();
-                    builder2.OpenElement(innerSeq++, "option");
-                    builder2.AddAttribute(innerSeq++, "value", "type");
-                    builder2.AddContent(innerSeq++, "Type Text");
-                    builder2.CloseElement();
-                    builder2.OpenElement(innerSeq++, "option");
-                    builder2.AddAttribute(innerSeq++, "value", "key_press");
-                    builder2.AddContent(innerSeq++, "Key Press");
-                    builder2.CloseElement();
-                    builder2.OpenElement(innerSeq++, "option");
-                    builder2.AddAttribute(innerSeq++, "value", "wait");
-                    builder2.AddContent(innerSeq++, "Wait");
-                    builder2.CloseElement();
-                    builder2.OpenElement(innerSeq++, "option");
-                    builder2.AddAttribute(innerSeq++, "value", "screenshot");
-                    builder2.AddContent(innerSeq++, "Screenshot");
-                    builder2.CloseElement();
-                    builder2.CloseElement();
-                    builder2.AddContent(innerSeq++, RenderActionParameters(step, action));
-                    builder2.OpenElement(innerSeq++, "button");
-                    builder2.AddAttribute(innerSeq++, "type", "button");
-                    builder2.AddAttribute(innerSeq++, "class", "btn btn-sm btn-outline-danger");
-                    builder2.AddAttribute(innerSeq++, "onclick", EventCallback.Factory.Create(this, () => RemoveAction(step, action)));
-                    builder2.AddContent(innerSeq++, "🗑️");
-                    builder2.CloseElement();
-                    builder2.CloseElement();
-                }));
-                builder.CloseElement();
-            }
-        }
-
-        builder.OpenElement(seq++, "button");
-        builder.AddAttribute(seq++, "type", "button");
-        builder.AddAttribute(seq++, "class", "btn btn-sm btn-outline-primary");
-        builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => AddAction(step)));
-        builder.AddContent(seq++, "➕ Add Success Action");
-        builder.CloseElement();
-    };
-
-    private void UpdateActionType(ScriptStep step, ScriptAction action, string newType)
-    {
-        if (action.Type == newType) return;
-
-        action.Type = newType;
-        action.Parameters = new Dictionary<string, object>();
-
-        switch (newType)
-        {
-            case "click":
-            case "double_click":
-            case "right_click":
-                action.Parameters["x"] = 0;
-                action.Parameters["y"] = 0;
-                break;
-            case "type":
-                action.Parameters["text"] = string.Empty;
-                break;
-            case "key_press":
-                action.Parameters["keys"] = string.Empty;
-                break;
-            case "wait":
-                action.Parameters["milliseconds"] = 1000;
-                break;
-            case "screenshot":
-                action.Parameters["fileName"] = $"condition_action_{DateTime.Now:yyyyMMdd_HHmmss}";
-                break;
-        }
-    }
-
-    private RenderFragment RenderActionParameters(ScriptStep step, ScriptAction action) => builder =>
-    {
-        int seq = 0;
-        var type = action.Type?.ToLower() ?? string.Empty;
-
-        switch (type)
-        {
-            case "click":
-            case "double_click":
-            case "right_click":
-                builder.OpenElement(seq++, "input");
-                builder.AddAttribute(seq++, "type", "number");
-                builder.AddAttribute(seq++, "placeholder", "X");
-                builder.AddAttribute(seq++, "class", "form-control form-control-sm");
-                builder.AddAttribute(seq++, "style", "width: 80px;");
-                builder.AddAttribute(seq++, "value", action.Parameters.GetValueOrDefault("x")?.ToString() ?? string.Empty);
-                builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => UpdateActionParameter(action, "x", e.Value)));
-                builder.CloseElement();
-                builder.OpenElement(seq++, "input");
-                builder.AddAttribute(seq++, "type", "number");
-                builder.AddAttribute(seq++, "placeholder", "Y");
-                builder.AddAttribute(seq++, "class", "form-control form-control-sm");
-                builder.AddAttribute(seq++, "style", "width: 80px;");
-                builder.AddAttribute(seq++, "value", action.Parameters.GetValueOrDefault("y")?.ToString() ?? string.Empty);
-                builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => UpdateActionParameter(action, "y", e.Value)));
-                builder.CloseElement();
-
-                builder.OpenElement(seq++, "button");
-                builder.AddAttribute(seq++, "type", "button");
-                builder.AddAttribute(seq++, "class", "btn btn-sm btn-outline-primary");
-                builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => StartPositionPicker(action)));
-                builder.AddContent(seq++, "📍 Pick");
-                builder.CloseElement();
-                break;
-            case "type":
-                builder.OpenElement(seq++, "input");
-                builder.AddAttribute(seq++, "type", "text");
-                builder.AddAttribute(seq++, "placeholder", "Text to type");
-                builder.AddAttribute(seq++, "class", "form-control form-control-sm");
-                builder.AddAttribute(seq++, "value", action.Parameters.GetValueOrDefault("text")?.ToString() ?? string.Empty);
-                builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => UpdateActionParameter(action, "text", e.Value)));
-                builder.CloseElement();
-                break;
-            case "key_press":
-                builder.OpenElement(seq++, "input");
-                builder.AddAttribute(seq++, "type", "text");
-                builder.AddAttribute(seq++, "placeholder", "Keys (e.g., CTRL+C)");
-                builder.AddAttribute(seq++, "class", "form-control form-control-sm");
-                builder.AddAttribute(seq++, "value", action.Parameters.GetValueOrDefault("keys")?.ToString() ?? string.Empty);
-                builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => UpdateActionParameter(action, "keys", e.Value)));
-                builder.CloseElement();
-                break;
-            case "wait":
-                builder.OpenElement(seq++, "input");
-                builder.AddAttribute(seq++, "type", "number");
-                builder.AddAttribute(seq++, "placeholder", "Milliseconds");
-                builder.AddAttribute(seq++, "class", "form-control form-control-sm");
-                builder.AddAttribute(seq++, "style", "width: 120px;");
-                builder.AddAttribute(seq++, "value", action.Parameters.GetValueOrDefault("milliseconds")?.ToString() ?? "1000");
-                builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => UpdateActionParameter(action, "milliseconds", e.Value)));
-                builder.CloseElement();
-                break;
-            case "screenshot":
-                builder.OpenElement(seq++, "input");
-                builder.AddAttribute(seq++, "type", "text");
-                builder.AddAttribute(seq++, "placeholder", "Filename (optional)");
-                builder.AddAttribute(seq++, "class", "form-control form-control-sm");
-                builder.AddAttribute(seq++, "value", action.Parameters.GetValueOrDefault("fileName")?.ToString() ?? string.Empty);
-                builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, e => UpdateActionParameter(action, "fileName", e.Value)));
-                builder.CloseElement();
-                break;
-            default:
-                builder.OpenElement(seq++, "span");
-                builder.AddAttribute(seq++, "class", "text-muted small");
-                builder.AddContent(seq++, "No parameters available for this action type.");
-                builder.CloseElement();
-                break;
-        }
-    };
-
-    private async Task StartCaptureTemplate(ScriptCondition condition)
-    {
-        try
-        {
-            currentConditionForTemplate = condition;
-            isCapturingTemplate = true;
-            StateHasChanged();
-
-            // Select region on desktop
-            var selectedRegion = await ScreenshotService.SelectDesktopRegionAsync();
-
-            if (selectedRegion.HasValue)
-            {
-                var rect = selectedRegion.Value;
-                
-                // Capture screenshot of the region
-                var screenshot = await ScreenshotService.CaptureRegionAsync(
-                    rect.X, rect.Y, rect.Width, rect.Height
-                );
-
-                if (screenshot != null)
-                {
-                    capturedTemplateData = screenshot;
-                    capturedRegion = rect;
-                    newTemplateName = $"Template_{DateTime.Now:yyyyMMdd_HHmmss}";
-                    showCaptureTemplateModal = true;
-                }
-                else
-                {
-                    ShowStatus("Failed to capture screenshot", "alert-danger");
-                }
-            }
-            else
-            {
-                ShowStatus("Region selection cancelled", "alert-info");
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "Error capturing template");
-            ShowStatus($"Error capturing template: {ex.Message}", "alert-danger");
-        }
-        finally
-        {
-            isCapturingTemplate = false;
-            StateHasChanged();
-        }
-    }
-
-    private async Task SaveCapturedTemplate()
-    {
-        if (string.IsNullOrWhiteSpace(newTemplateName))
-        {
-            ShowStatus("Please enter a template name", "alert-warning");
-            return;
-        }
-
-        if (capturedTemplateData == null || currentConditionForTemplate == null)
-        {
-            ShowStatus("No template data to save", "alert-danger");
-            return;
-        }
-
-        try
-        {
-            // Create and save the template
-            var template = new TemplateImage
-            {
-                Name = newTemplateName,
-                ImageData = capturedTemplateData,
-                CaptureRegion = capturedRegion,
-                MatchThreshold = 0.8
-            };
-
-            var templateId = await ScriptStorage.SaveTemplateImageAsync(template);
-            
-            // Reload templates to include the new one
-            await LoadScripts();
-
-            // Automatically select this template in the condition
-            currentConditionForTemplate.Parameters["templateImageId"] = templateId;
-
-            ShowStatus($"✅ Template '{newTemplateName}' saved and selected!", "alert-success");
-            
-            // Close the modal
-            CloseCaptureTemplateModal();
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "Error saving captured template");
-            ShowStatus($"Error saving template: {ex.Message}", "alert-danger");
-        }
-    }
-
-    private void CloseCaptureTemplateModal()
-    {
-        showCaptureTemplateModal = false;
-        capturedTemplateData = null;
-        newTemplateName = string.Empty;
-        currentConditionForTemplate = null;
-        capturedRegion = default;
         StateHasChanged();
     }
 }
