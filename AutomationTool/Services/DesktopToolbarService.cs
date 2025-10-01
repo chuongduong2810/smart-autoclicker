@@ -28,7 +28,7 @@ namespace AutomationTool.Services
             {
                 try
                 {
-                    _logger.LogInformation("ShowToolbarAsync called");
+                    // _logger.LogInformation("ShowToolbarAsync called");
                     
                     DesktopToolbarForm? form;
                     lock (_lock)
@@ -96,7 +96,7 @@ namespace AutomationTool.Services
                     }
                     else
                     {
-                        _logger.LogWarning("Toolbar form is null or disposed");
+                        // _logger.LogWarning("Toolbar form is null or disposed");
                     }
                 }
                 catch (Exception ex)

@@ -4,119 +4,192 @@
 @inject IScriptStorageService ScriptStorage
 @inject IScriptExecutionService ScriptExecution
 
-<PageTitle>Dashboard - Automation Tool</PageTitle>
+<PageTitle>Dashboard - Smart Auto Clicker</PageTitle>
+<div class="dashboard-grid">
+    <!-- Stats Overview Cards -->
+    <div class="stats-row">
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-primary">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z" fill="currentColor"/>
+                </svg>
+            </div>
+            <div class="stat-content">
+                <div class="stat-value">@scripts.Count</div>
+                <div class="stat-label">Total Scripts</div>
+            </div>
+        </div>
 
-<h1>Automation Tool Dashboard</h1>
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-success">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M8 5v14l11-7z" fill="currentColor"/>
+                </svg>
+            </div>
+            <div class="stat-content">
+                <div class="stat-value">@executionStates.Count(e => e.Status == "RUNNING")</div>
+                <div class="stat-label">Active Executions</div>
+            </div>
+        </div>
 
-<div class="row">
-    <div class="col-md-4">
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">📊 Overview</h5>
-                <p class="card-text">Total Scripts: @scripts.Count</p>
-                <p class="card-text">Active Executions: @executionStates.Count(e => e.Status == "RUNNING")</p>
-                <p class="card-text">Templates: @templates.Count</p>
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-info">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M22 16V4c0-1.1-.9-2-2-2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2zm-11-4l2.03 2.71L16 11l4 5H8l3-4zM2 6v14c0 1.1.9 2 2 2h14v-2H4V6H2z" fill="currentColor"/>
+                </svg>
+            </div>
+            <div class="stat-content">
+                <div class="stat-value">@templates.Count</div>
+                <div class="stat-label">Templates</div>
             </div>
         </div>
     </div>
-    
-    <div class="col-md-4">
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">🚀 Quick Actions</h5>
-                <div class="d-grid gap-2">
-                    <a href="/screenshot" class="btn btn-primary">Take Screenshot</a>
-                    <a href="/scripts" class="btn btn-success">Create Script</a>
-                    <a href="/execution" class="btn btn-warning">View Executions</a>
+
+    <!-- Quick Actions Card -->
+    <div class="card quick-actions-card">
+        <div class="card-body">
+            <h5 class="card-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M13 10V3L4 14h7v7l9-11h-7z" fill="currentColor"/>
+                </svg>
+                Quick Actions
+            </h5>
+            <div class="action-buttons">
+                <a href="/screenshot" class="action-btn action-btn-primary">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" fill="currentColor"/>
+                    </svg>
+                    Take Screenshot
+                </a>
+                <a href="/scripts" class="action-btn action-btn-success">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" fill="currentColor"/>
+                    </svg>
+                    Create Script
+                </a>
+                <a href="/execution" class="action-btn action-btn-warning">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M8 5v14l11-7z" fill="currentColor"/>
+                    </svg>
+                    View Executions
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Activity Card -->
+    <div class="card activity-card">
+        <div class="card-body">
+            <h5 class="card-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z" fill="currentColor"/>
+                </svg>
+                Recent Activity
+            </h5>
+            @if (recentLogs.Any())
+            {
+                <div class="activity-list">
+                    @foreach (var log in recentLogs.Take(5))
+                    {
+                        <div class="activity-item">
+                            <span class="badge badge-@GetLogLevel(log.Level)">@log.Level</span>
+                            <span class="activity-message">@log.Message</span>
+                            <span class="activity-time">@log.Timestamp.ToString("HH:mm:ss")</span>
+                        </div>
+                    }
                 </div>
-            </div>
-        </div>
-    </div>
-    
-    <div class="col-md-4">
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">📈 Recent Activity</h5>
-                @if (recentLogs.Any())
-                {
-                    <div style="max-height: 200px; overflow-y: auto;">
-                        @foreach (var log in recentLogs.Take(5))
-                        {
-                            <div class="small">
-                                <span class="badge @GetLogLevelClass(log.Level)">@log.Level</span>
-                                @log.Message
-                                <br><small class="text-muted">@log.Timestamp.ToString("HH:mm:ss")</small>
-                            </div>
-                            <hr class="my-1">
-                        }
-                    </div>
-                }
-                else
-                {
-                    <p class="text-muted">No recent activity</p>
-                }
-            </div>
+            }
+            else
+            {
+                <div class="empty-state">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" fill="currentColor" opacity="0.3"/>
+                    </svg>
+                    <p>No recent activity</p>
+                </div>
+            }
         </div>
     </div>
 </div>
 
-<div class="row mt-4">
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">📝 Recent Scripts</h5>
-                @if (scripts.Any())
-                {
-                    <div class="list-group list-group-flush">
-                        @foreach (var script in scripts.OrderByDescending(s => s.ModifiedAt).Take(5))
-                        {
-                            <div class="list-group-item d-flex justify-content-between align-items-center">
-                                <div>
-                                    <strong>@script.Name</strong>
-                                    <br><small class="text-muted">@script.Description</small>
-                                </div>
-                                <span class="badge bg-primary rounded-pill">@script.Steps.Count steps</span>
+<div class="bottom-section">
+    <!-- Recent Scripts Card -->
+    <div class="card scripts-card">
+        <div class="card-body">
+            <h5 class="card-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z" fill="currentColor"/>
+                </svg>
+                Recent Scripts
+            </h5>
+            @if (scripts.Any())
+            {
+                <div class="scripts-list">
+                    @foreach (var script in scripts.OrderByDescending(s => s.ModifiedAt).Take(5))
+                    {
+                        <div class="script-item">
+                            <div class="script-info">
+                                <div class="script-name">@script.Name</div>
+                                <div class="script-description">@script.Description</div>
                             </div>
-                        }
-                    </div>
-                }
-                else
-                {
-                    <p class="text-muted">No scripts created yet</p>
-                }
-            </div>
+                            <span class="badge badge-steps">@script.Steps.Count steps</span>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="empty-state">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z" fill="currentColor" opacity="0.3"/>
+                    </svg>
+                    <p>No scripts created yet</p>
+                </div>
+            }
         </div>
     </div>
-    
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">⚡ System Status</h5>
-                <div class="row">
-                    <div class="col-6">
-                        <div class="text-center">
-                            <div class="display-6 text-success">✅</div>
-                            <small>Screenshot Service</small>
-                        </div>
+
+    <!-- System Status Card -->
+    <div class="card status-card">
+        <div class="card-body">
+            <h5 class="card-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/>
+                </svg>
+                System Status
+            </h5>
+            <div class="status-grid">
+                <div class="status-item">
+                    <div class="status-icon-wrapper status-success">
+                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z" fill="currentColor"/>
+                        </svg>
                     </div>
-                    <div class="col-6">
-                        <div class="text-center">
-                            <div class="display-6 text-success">✅</div>
-                            <small>Image Recognition</small>
-                        </div>
+                    <span class="status-label">Screenshot Service</span>
+                </div>
+                <div class="status-item">
+                    <div class="status-icon-wrapper status-success">
+                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z" fill="currentColor"/>
+                        </svg>
                     </div>
-                    <div class="col-6">
-                        <div class="text-center">
-                            <div class="display-6 text-success">✅</div>
-                            <small>Automation Engine</small>
-                        </div>
+                    <span class="status-label">Image Recognition</span>
+                </div>
+                <div class="status-item">
+                    <div class="status-icon-wrapper status-success">
+                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z" fill="currentColor"/>
+                        </svg>
                     </div>
-                    <div class="col-6">
-                        <div class="text-center">
-                            <div class="display-6 text-success">✅</div>
-                            <small>Script Storage</small>
-                        </div>
+                    <span class="status-label">Automation Engine</span>
+                </div>
+                <div class="status-item">
+                    <div class="status-icon-wrapper status-success">
+                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z" fill="currentColor"/>
+                        </svg>
                     </div>
+                    <span class="status-label">Script Storage</span>
                 </div>
             </div>
         </div>
@@ -152,6 +225,18 @@
             "INFO" => "bg-info text-dark",
             "DEBUG" => "bg-secondary",
             _ => "bg-light text-dark"
+        };
+    }
+
+    private string GetLogLevel(string level)
+    {
+        return level.ToLower() switch
+        {
+            "error" => "danger",
+            "warning" => "warning",
+            "info" => "info",
+            "debug" => "secondary",
+            _ => "secondary"
         };
     }
 }

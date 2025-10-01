@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AutomationTool")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5c7e81a088d42dbf6cab1b6b71d40dab6e89ed36")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+bfe48f2ad259f5aaaa59b1c0916dcb94797d20c0")]
 [assembly: System.Reflection.AssemblyProductAttribute("AutomationTool")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AutomationTool")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

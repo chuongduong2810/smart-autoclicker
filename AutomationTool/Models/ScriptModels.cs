@@ -16,6 +16,11 @@ namespace AutomationTool.Models
         public bool IsInfiniteRepeat { get; set; } = false;
         public int RepeatCount { get; set; } = 1;
         public int DelayBetweenRepeats { get; set; } = 0; // Milliseconds delay between repetitions
+
+        // Window targeting
+        public bool UseWindowTargeting { get; set; } = false;
+        public string? TargetWindowHandle { get; set; }
+        public string? TargetWindowDescription { get; set; }
     }
 
     public class ScriptStep

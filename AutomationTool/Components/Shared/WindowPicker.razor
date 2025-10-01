@@ -1,0 +1,210 @@
+@implements IAsyncDisposable
+@using AutomationTool.Models
+@using AutomationTool.Services
+@inject IWindowEnumerationService WindowEnumeration
+
+<div class="window-picker">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">@Title</h6>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-secondary" @onclick="RefreshAsync" title="Refresh window list" disabled="@isRefreshing">
+                @if (isRefreshing)
+                {
+                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                }
+                else
+                {
+                    <text>🔄 Refresh</text>
+                }
+            </button>
+            <button class="btn btn-outline-danger" @onclick="ClearSelection">✖ Clear</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger py-2 px-3" role="alert">
+            <small>@errorMessage</small>
+        </div>
+    }
+
+    <div class="input-group input-group-sm mb-2">
+        <span class="input-group-text">Filter</span>
+        <input type="text" class="form-control" @bind-value="filterText" @bind-value:event="oninput" placeholder="Search by title or process">
+    </div>
+
+    <div class="window-picker-list border rounded overflow-auto">
+        @if (isLoading)
+        {
+            <div class="text-center py-3 text-muted">
+                <div class="spinner-border spinner-border-sm" role="status"></div>
+                <div class="mt-2">Loading windows...</div>
+            </div>
+        }
+        else if (!filteredWindows.Any())
+        {
+            <div class="text-center py-3 text-muted">
+                <div>😴</div>
+                <div class="mt-1">No windows found</div>
+                <small>Try refreshing or adjusting the filter.</small>
+            </div>
+        }
+        else
+        {
+            <div class="list-group list-group-flush">
+                @foreach (var window in filteredWindows)
+                {
+                    var isSelected = SelectedHandle == window.Handle;
+                    <button type="button"
+                            class="list-group-item list-group-item-action d-flex justify-content-between align-items-start @GetListItemClass(isSelected)"
+                            @onclick="() => SelectWindow(window.Handle)">
+                        <div>
+                            <div class="fw-semibold">@window.Title</div>
+                            <div class="small text-muted">@window.ProcessName • @window.HandleHex</div>
+                        </div>
+                        <span class="badge bg-secondary align-self-center">@window.Bounds.Width x @window.Bounds.Height</span>
+                    </button>
+                }
+            </div>
+        }
+    </div>
+
+    @if (SelectedHandle != IntPtr.Zero)
+    {
+        <div class="alert alert-success mt-2 py-2 px-3" role="alert">
+            <small>
+                ✅ Selected window: <strong>@selectedWindow?.Title</strong>
+                <span class="text-muted">(@selectedWindow?.ProcessName • @selectedWindow?.HandleHex)</span>
+            </small>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public IntPtr SelectedHandle { get; set; }
+    [Parameter] public EventCallback<IntPtr> SelectedHandleChanged { get; set; }
+    [Parameter] public EventCallback<WindowInfo?> OnSelectionChanged { get; set; }
+    [Parameter] public string Title { get; set; } = "Target Window";
+    [Parameter] public string DisabledMessage { get; set; } = "Window selection disabled";
+
+    private readonly List<WindowInfo> windows = new();
+    private IEnumerable<WindowInfo> filteredWindows => windows
+        .Where(w => string.IsNullOrWhiteSpace(filterText)
+                    || w.Title.Contains(filterText, StringComparison.OrdinalIgnoreCase)
+                    || w.ProcessName.Contains(filterText, StringComparison.OrdinalIgnoreCase))
+        .OrderByDescending(w => w.Handle == SelectedHandle)
+        .ThenBy(w => w.Title);
+
+    private WindowInfo? selectedWindow;
+    private string filterText = string.Empty;
+    private string errorMessage = string.Empty;
+    private bool isLoading;
+    private bool isRefreshing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        WindowEnumeration.WindowListUpdated += OnWindowListUpdated;
+        WindowEnumeration.WindowForegroundChanged += OnWindowForegroundChanged;
+
+        var cached = WindowEnumeration.GetCachedWindows();
+        if (cached.Any())
+        {
+            windows.Clear();
+            windows.AddRange(cached);
+        }
+
+        await LoadWindowsAsync(initialLoad: !windows.Any());
+    }
+
+    protected override void OnParametersSet()
+    {
+        selectedWindow = windows.FirstOrDefault(w => w.Handle == SelectedHandle);
+    }
+
+    private async Task LoadWindowsAsync(bool initialLoad = false)
+    {
+        try
+        {
+            if (initialLoad)
+            {
+                isLoading = true;
+            }
+            else
+            {
+                isRefreshing = true;
+            }
+            errorMessage = string.Empty;
+
+            await WindowEnumeration.UpdateWindowCacheAsync();
+            var result = WindowEnumeration.GetCachedWindows();
+            windows.Clear();
+            windows.AddRange(result);
+
+            selectedWindow = windows.FirstOrDefault(w => w.Handle == SelectedHandle);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to enumerate windows: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+            isRefreshing = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private Task RefreshAsync() => LoadWindowsAsync();
+
+    private async Task SelectWindow(IntPtr handle)
+    {
+        if (SelectedHandle == handle)
+        {
+            return;
+        }
+
+        SelectedHandle = handle;
+        selectedWindow = windows.FirstOrDefault(w => w.Handle == handle);
+
+        await SelectedHandleChanged.InvokeAsync(handle);
+        await OnSelectionChanged.InvokeAsync(selectedWindow);
+    }
+
+    private async Task ClearSelection()
+    {
+        SelectedHandle = IntPtr.Zero;
+        selectedWindow = null;
+
+        await SelectedHandleChanged.InvokeAsync(IntPtr.Zero);
+        await OnSelectionChanged.InvokeAsync(null);
+    }
+
+    private void OnWindowListUpdated(object? sender, EventArgs e)
+    {
+        _ = InvokeAsync(async () => await LoadWindowsAsync());
+    }
+
+    private void OnWindowForegroundChanged(object? sender, WindowInfo info)
+    {
+        if (SelectedHandle == IntPtr.Zero)
+        {
+            return;
+        }
+
+        if (info.Handle == SelectedHandle)
+        {
+            selectedWindow = info;
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private string GetListItemClass(bool isSelected) => isSelected ? "active" : string.Empty;
+
+    public ValueTask DisposeAsync()
+    {
+        WindowEnumeration.WindowListUpdated -= OnWindowListUpdated;
+        WindowEnumeration.WindowForegroundChanged -= OnWindowForegroundChanged;
+        return ValueTask.CompletedTask;
+    }
+}
+

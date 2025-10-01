@@ -1,14 +1,21 @@
 using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Text;
+using AutomationTool.Models;
 
 namespace AutomationTool.Services
 {
-    public class DesktopWindowService : IDisposable
+    public class DesktopWindowService : IWindowEnumerationService
     {
         private readonly ILogger<DesktopWindowService> _logger;
-        private Process? _toolbarProcess;
-        private readonly string _baseUrl;
+        private readonly ConcurrentDictionary<IntPtr, WindowInfo> _windows = new();
+        private IntPtr _foregroundWindow;
+
+        public event EventHandler? WindowListUpdated;
+        public event EventHandler<WindowInfo>? WindowForegroundChanged;
 
         // Windows API declarations
         [DllImport("user32.dll")]
@@ -26,6 +33,44 @@ namespace AutomationTool.Services
         [DllImport("user32.dll")]
         private static extern uint GetWindowLong(IntPtr hWnd, int nIndex);
 
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        [DllImport("user32.dll")]
+        private static extern int GetWindowTextLength(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
         private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
         private const uint SWP_NOMOVE = 0x0002;
         private const uint SWP_NOSIZE = 0x0001;
@@ -33,125 +78,253 @@ namespace AutomationTool.Services
         private const int GWL_EXSTYLE = -20;
         private const uint WS_EX_TOOLWINDOW = 0x00000080;
         private const uint WS_EX_APPWINDOW = 0x00040000;
+        private const int GWL_STYLE = -16;
+        private const uint WS_VISIBLE = 0x10000000;
+        private const uint WS_MINIMIZE = 0x20000000;
+        private const uint WS_DISABLED = 0x08000000;
 
         public DesktopWindowService(ILogger<DesktopWindowService> logger)
         {
             _logger = logger;
-            _baseUrl = "http://localhost:5219";
         }
 
-        public async Task ShowDesktopToolbarAsync()
+        public Task<List<WindowInfo>> EnumerateWindowsAsync()
         {
-            try
+            return Task.Run(() =>
             {
-                if (_toolbarProcess == null || _toolbarProcess.HasExited)
+                var windows = new List<WindowInfo>();
+
+                bool Callback(IntPtr hWnd, IntPtr lParam)
                 {
-                    _logger.LogInformation("Starting desktop toolbar browser window");
-
-                    // Create a minimal browser window for the toolbar
-                    var startInfo = new ProcessStartInfo
+                    if (!IsEligibleWindow(hWnd))
                     {
-                        FileName = "msedge.exe", // Try Edge first
-                        Arguments = $"--app={_baseUrl}/toolbar-only --window-size=400,100 --window-position=1520,20 --disable-web-security --disable-features=VizDisplayCompositor",
-                        UseShellExecute = true,
-                        WindowStyle = ProcessWindowStyle.Normal
-                    };
-
-                    try
-                    {
-                        _toolbarProcess = Process.Start(startInfo);
+                        return true;
                     }
-                    catch
+
+                    if (GetWindowRect(hWnd, out var rect))
                     {
-                        // Fallback to Chrome
-                        startInfo.FileName = "chrome.exe";
-                        try
+                        var title = GetWindowTitle(hWnd);
+                        if (!string.IsNullOrWhiteSpace(title))
                         {
-                            _toolbarProcess = Process.Start(startInfo);
-                        }
-                        catch
-                        {
-                            // Final fallback to default browser
-                            startInfo.FileName = _baseUrl + "/toolbar-only";
-                            startInfo.Arguments = "";
-                            startInfo.UseShellExecute = true;
-                            _toolbarProcess = Process.Start(startInfo);
+                            GetWindowThreadProcessId(hWnd, out var processId);
+                            var processName = TryGetProcessName(processId);
+
+                            windows.Add(new WindowInfo
+                            {
+                                Handle = hWnd,
+                                Title = title,
+                                ProcessId = processId,
+                                ProcessName = processName,
+                                Bounds = new Rectangle(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top)
+                            });
                         }
                     }
 
-                    if (_toolbarProcess != null)
-                    {
-                        // Wait a moment for the window to appear
-                        await Task.Delay(2000);
-
-                        // Try to modify the window to make it always on top
-                        MakeWindowAlwaysOnTop();
-                    }
+                    return true;
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error starting desktop toolbar window");
-            }
+
+                EnumWindows(Callback, IntPtr.Zero);
+
+                return windows;
+            });
         }
 
-        private void MakeWindowAlwaysOnTop()
+        public IReadOnlyCollection<WindowInfo> GetCachedWindows()
+        {
+            return _windows.Values.ToList().AsReadOnly();
+        }
+
+        public Task UpdateWindowCacheAsync()
+        {
+            return Task.Run(() =>
+            {
+                RefreshWindowCache();
+                UpdateForegroundWindow();
+            });
+        }
+
+        public void RefreshWindowCache()
+        {
+            var enumeratedWindows = EnumerateWindowsAsync().Result;
+
+            var handles = new HashSet<IntPtr>();
+
+            foreach (var window in enumeratedWindows)
+            {
+                handles.Add(window.Handle);
+                _windows[window.Handle] = window;
+                DispatchWindowUpdateEvent(window);
+            }
+
+            foreach (var cachedHandle in _windows.Keys.ToList())
+            {
+                if (!handles.Contains(cachedHandle))
+                {
+                    _windows.TryRemove(cachedHandle, out _);
+                }
+            }
+
+            WindowListUpdated?.Invoke(this, EventArgs.Empty);
+        }
+
+        public bool TryGetWindow(IntPtr handle, out WindowInfo windowInfo)
+        {
+            if (_windows.TryGetValue(handle, out windowInfo))
+            {
+                return true;
+            }
+
+            if (GetWindowRect(handle, out var rect))
+            {
+                var title = GetWindowTitle(handle);
+                GetWindowThreadProcessId(handle, out var processId);
+                var processName = TryGetProcessName(processId);
+
+                windowInfo = new WindowInfo
+                {
+                    Handle = handle,
+                    Title = title,
+                    ProcessId = processId,
+                    ProcessName = processName,
+                    Bounds = new Rectangle(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top)
+                };
+
+                _windows[handle] = windowInfo;
+                return true;
+            }
+
+            windowInfo = null!;
+            return false;
+        }
+
+        public bool TryGetWindowBounds(IntPtr handle, out Rectangle bounds)
+        {
+            if (GetWindowRect(handle, out var rect))
+            {
+                bounds = new Rectangle(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
+                return true;
+            }
+
+            bounds = Rectangle.Empty;
+            return false;
+        }
+
+        public bool TryGetClientBounds(IntPtr handle, out Rectangle bounds)
+        {
+            if (GetClientRect(handle, out var rect))
+            {
+                bounds = new Rectangle(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
+                return true;
+            }
+
+            bounds = Rectangle.Empty;
+            return false;
+        }
+
+        private string TryGetProcessName(uint processId)
         {
             try
             {
-                // This is a best-effort attempt to find and modify the browser window
-                // Note: This approach has limitations due to security restrictions
-                if (_toolbarProcess != null && !_toolbarProcess.HasExited)
+                if (processId == 0)
                 {
-                    var mainWindowHandle = _toolbarProcess.MainWindowHandle;
-                    if (mainWindowHandle != IntPtr.Zero)
-                    {
-                        // Make window always on top
-                        SetWindowPos(mainWindowHandle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-                        
-                        // Try to remove it from taskbar
-                        var exStyle = GetWindowLong(mainWindowHandle, GWL_EXSTYLE);
-                        SetWindowLong(mainWindowHandle, GWL_EXSTYLE, exStyle | WS_EX_TOOLWINDOW);
-                    }
+                    return "System";
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("Could not modify window properties: {Error}", ex.Message);
-            }
-        }
 
-        public Task HideDesktopToolbarAsync()
-        {
-            try
-            {
-                if (_toolbarProcess != null && !_toolbarProcess.HasExited)
-                {
-                    _toolbarProcess.CloseMainWindow();
-                    _toolbarProcess.Close();
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error hiding desktop toolbar window");
-            }
-            return Task.CompletedTask;
-        }
-
-        public void Dispose()
-        {
-            try
-            {
-                if (_toolbarProcess != null && !_toolbarProcess.HasExited)
-                {
-                    _toolbarProcess.Kill();
-                    _toolbarProcess.Dispose();
-                }
+                var process = Process.GetProcessById((int)processId);
+                return process.ProcessName;
             }
             catch
             {
-                // Ignore disposal errors
+                return "Unknown";
             }
+        }
+
+        private string GetWindowTitle(IntPtr handle)
+        {
+            var length = GetWindowTextLength(handle);
+            if (length == 0)
+            {
+                return string.Empty;
+            }
+
+            var builder = new StringBuilder(length + 1);
+            GetWindowText(handle, builder, builder.Capacity);
+            return builder.ToString();
+        }
+
+        private void UpdateForegroundWindow()
+        {
+            var currentForeground = GetForegroundWindow();
+
+            if (currentForeground != _foregroundWindow)
+            {
+                _foregroundWindow = currentForeground;
+
+                if (_foregroundWindow != IntPtr.Zero && TryGetWindow(_foregroundWindow, out var info))
+                {
+                    WindowForegroundChanged?.Invoke(this, info);
+                }
+            }
+        }
+
+        private void DispatchWindowUpdateEvent(WindowInfo window)
+        {
+            // Placeholder for future event dispatch logic (e.g. message bus)
+        }
+
+        private bool IsEligibleWindow(IntPtr hWnd)
+        {
+            if (hWnd == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            var style = GetWindowLong(hWnd, GWL_STYLE);
+            if ((style & WS_VISIBLE) == 0)
+            {
+                return false;
+            }
+
+            if ((style & WS_MINIMIZE) != 0)
+            {
+                return false;
+            }
+
+            if ((style & WS_DISABLED) != 0)
+            {
+                return false;
+            }
+
+            if (!IsWindowVisible(hWnd))
+            {
+                return false;
+            }
+
+            var title = GetWindowTitle(hWnd);
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                return false;
+            }
+
+            if (!GetWindowRect(hWnd, out var rect))
+            {
+                return false;
+            }
+
+            if (rect.Right - rect.Left <= 0 || rect.Bottom - rect.Top <= 0)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public Task ShowDesktopToolbarAsync() => Task.CompletedTask;
+
+        public Task HideDesktopToolbarAsync() => Task.CompletedTask;
+
+        public void Dispose()
+        {
         }
     }
 }

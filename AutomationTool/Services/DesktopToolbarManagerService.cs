@@ -21,8 +21,11 @@ namespace AutomationTool.Services
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            _logger.LogInformation("DesktopToolbarManagerService starting ExecuteAsync");
+
             // Wait a bit for all services to be initialized
             await Task.Delay(2000, stoppingToken);
+            _logger.LogDebug("Initialisation delay completed. Resolving dependent services.");
 
             try
             {
@@ -30,6 +33,11 @@ namespace AutomationTool.Services
                 _scriptExecution = _serviceProvider.GetRequiredService<IScriptExecutionService>();
                 _scriptStorage = _serviceProvider.GetRequiredService<IScriptStorageService>();
                 _toolbarService = ActivatorUtilities.CreateInstance<DesktopToolbarService>(_serviceProvider);
+                _logger.LogDebug("Resolved services: ScriptExecution={HasExecution}, ScriptStorage={HasStorage}, ToolbarService={HasToolbar}",
+                    _scriptExecution != null,
+                    _scriptStorage != null,
+                    _toolbarService != null);
+
                 _toolbarService.ToolbarActionRequested += OnToolbarActionRequested;
 
                 // Subscribe to events

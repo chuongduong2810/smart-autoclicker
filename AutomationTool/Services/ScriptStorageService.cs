@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AutomationTool.Models;
+using Microsoft.Extensions.Logging;
 
 namespace AutomationTool.Services
 {

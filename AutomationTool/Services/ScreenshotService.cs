@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using AutomationTool.Models;
 using AutomationTool.Utils;
+using Microsoft.Extensions.Logging;
 
 namespace AutomationTool.Services
 {

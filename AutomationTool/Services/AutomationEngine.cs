@@ -1,6 +1,6 @@
 using System.Drawing;
 using System.Runtime.InteropServices;
-using AutomationTool.Models;
+using Microsoft.Extensions.Logging;
 
 namespace AutomationTool.Services
 {
@@ -16,11 +16,17 @@ namespace AutomationTool.Services
         Task MoveMouseAsync(Point location);
         Task DragAsync(Point from, Point to);
         Point GetMousePosition();
+        void SetTargetWindow(IntPtr windowHandle);
+        void ClearTargetWindow();
+        IntPtr GetTargetWindow();
+        bool HasTargetWindow { get; }
     }
 
     public class WindowsAutomationEngine : IAutomationEngine
     {
         private readonly ILogger<WindowsAutomationEngine> _logger;
+        private IntPtr _targetWindowHandle;
+        private readonly object _targetWindowLock = new();
 
         // Windows API constants
         private const int MOUSEEVENTF_MOVE = 0x0001;
@@ -33,12 +39,29 @@ namespace AutomationTool.Services
         private const int KEYEVENTF_KEYDOWN = 0x0000;
         private const int KEYEVENTF_KEYUP = 0x0002;
 
+        private const int MK_LBUTTON = 0x0001;
+        private const int MK_RBUTTON = 0x0002;
+
+        private const uint WM_MOUSEMOVE = 0x0200;
+        private const uint WM_LBUTTONDOWN = 0x0201;
+        private const uint WM_LBUTTONUP = 0x0202;
+        private const uint WM_LBUTTONDBLCLK = 0x0203;
+        private const uint WM_RBUTTONDOWN = 0x0204;
+        private const uint WM_RBUTTONUP = 0x0205;
+        private const uint WM_RBUTTONDBLCLK = 0x0206;
+        private const uint WM_KEYDOWN = 0x0100;
+        private const uint WM_KEYUP = 0x0101;
+        private const uint WM_CHAR = 0x0102;
+
         // Windows API imports
         [DllImport("user32.dll")]
         private static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
 
         [DllImport("user32.dll")]
         private static extern bool SetCursorPos(int x, int y);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
 
         [DllImport("user32.dll")]
         private static extern bool GetCursorPos(out POINT lpPoint);
@@ -52,11 +75,35 @@ namespace AutomationTool.Services
         [DllImport("user32.dll")]
         private static extern int GetSystemMetrics(int nIndex);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        private static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT
         {
             public int X;
             public int Y;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
         }
 
         // Virtual key codes
@@ -89,18 +136,16 @@ namespace AutomationTool.Services
                 try
                 {
                     _logger.LogDebug("Clicking at position ({X}, {Y})", x, y);
-                    
-                    // Move cursor to position
-                    SetCursorPos(x, y);
-                    
-                    // Small delay to ensure cursor movement
-                    Thread.Sleep(10);
-                    
-                    // Perform left click
-                    mouse_event(MOUSEEVENTF_LEFTDOWN, x, y, 0, 0);
-                    Thread.Sleep(10);
-                    mouse_event(MOUSEEVENTF_LEFTUP, x, y, 0, 0);
-                    
+
+                    if (!TrySendWindowClick(x, y, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP))
+                    {
+                        SetCursorPos(x, y);
+                        Thread.Sleep(10);
+                        mouse_event(MOUSEEVENTF_LEFTDOWN, x, y, 0, 0);
+                        Thread.Sleep(10);
+                        mouse_event(MOUSEEVENTF_LEFTUP, x, y, 0, 0);
+                    }
+
                     _logger.LogInformation("Clicked at position ({X}, {Y})", x, y);
                 }
                 catch (Exception ex)
@@ -119,9 +164,12 @@ namespace AutomationTool.Services
                 {
                     _logger.LogDebug("Double-clicking at position ({X}, {Y})", location.X, location.Y);
                     
-                    await ClickAsync(location);
-                    await Task.Delay(50); // Small delay between clicks
-                    await ClickAsync(location);
+                    if (!TrySendWindowClick(location.X, location.Y, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, doubleClick: true))
+                    {
+                        await ClickAsync(location);
+                        await Task.Delay(50);
+                        await ClickAsync(location);
+                    }
                     
                     _logger.LogInformation("Double-clicked at position ({X}, {Y})", location.X, location.Y);
                 }
@@ -140,16 +188,16 @@ namespace AutomationTool.Services
                 try
                 {
                     _logger.LogDebug("Right-clicking at position ({X}, {Y})", location.X, location.Y);
-                    
-                    // Move cursor to position
-                    SetCursorPos(location.X, location.Y);
-                    Thread.Sleep(10);
-                    
-                    // Perform right click
-                    mouse_event(MOUSEEVENTF_RIGHTDOWN, location.X, location.Y, 0, 0);
-                    Thread.Sleep(10);
-                    mouse_event(MOUSEEVENTF_RIGHTUP, location.X, location.Y, 0, 0);
-                    
+
+                    if (!TrySendWindowClick(location.X, location.Y, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP))
+                    {
+                        SetCursorPos(location.X, location.Y);
+                        Thread.Sleep(10);
+                        mouse_event(MOUSEEVENTF_RIGHTDOWN, location.X, location.Y, 0, 0);
+                        Thread.Sleep(10);
+                        mouse_event(MOUSEEVENTF_RIGHTUP, location.X, location.Y, 0, 0);
+                    }
+
                     _logger.LogInformation("Right-clicked at position ({X}, {Y})", location.X, location.Y);
                 }
                 catch (Exception ex)
@@ -172,16 +220,14 @@ namespace AutomationTool.Services
                     {
                         if (char.IsControl(c))
                         {
-                            // Handle special characters
                             HandleSpecialCharacter(c);
                         }
                         else
                         {
-                            // Type regular character
                             TypeCharacter(c);
                         }
                         
-                        Thread.Sleep(10); // Small delay between keystrokes
+                        Thread.Sleep(10);
                     }
                     
                     _logger.LogInformation("Typed text: {Text}", text);
@@ -208,24 +254,21 @@ namespace AutomationTool.Services
                     {
                         if (key.IsModifier)
                         {
-                            // Press modifier key
-                            keybd_event(key.VirtualKey, 0, KEYEVENTF_KEYDOWN, 0);
+                            SendKeyToTarget(key.VirtualKey, KEYEVENTF_KEYDOWN);
                         }
                         else
                         {
-                            // Press and release regular key
-                            keybd_event(key.VirtualKey, 0, KEYEVENTF_KEYDOWN, 0);
+                            SendKeyToTarget(key.VirtualKey, KEYEVENTF_KEYDOWN);
                             Thread.Sleep(10);
-                            keybd_event(key.VirtualKey, 0, KEYEVENTF_KEYUP, 0);
+                            SendKeyToTarget(key.VirtualKey, KEYEVENTF_KEYUP);
                         }
                         
                         Thread.Sleep(10);
                     }
                     
-                    // Release all modifier keys
                     foreach (var key in keySequence.Where(k => k.IsModifier))
                     {
-                        keybd_event(key.VirtualKey, 0, KEYEVENTF_KEYUP, 0);
+                        SendKeyToTarget(key.VirtualKey, KEYEVENTF_KEYUP);
                     }
                     
                     _logger.LogInformation("Sent keys: {Keys}", keys);
@@ -252,7 +295,12 @@ namespace AutomationTool.Services
                 try
                 {
                     _logger.LogDebug("Moving mouse to position ({X}, {Y})", location.X, location.Y);
-                    SetCursorPos(location.X, location.Y);
+
+                    if (!TrySendMouseMove(location.X, location.Y))
+                    {
+                        SetCursorPos(location.X, location.Y);
+                    }
+
                     _logger.LogInformation("Moved mouse to position ({X}, {Y})", location.X, location.Y);
                 }
                 catch (Exception ex)
@@ -270,22 +318,18 @@ namespace AutomationTool.Services
                 try
                 {
                     _logger.LogDebug("Dragging from ({FromX}, {FromY}) to ({ToX}, {ToY})", from.X, from.Y, to.X, to.Y);
-                    
-                    // Move to start position
-                    SetCursorPos(from.X, from.Y);
-                    Thread.Sleep(50);
-                    
-                    // Press mouse button down
-                    mouse_event(MOUSEEVENTF_LEFTDOWN, from.X, from.Y, 0, 0);
-                    Thread.Sleep(50);
-                    
-                    // Move to end position while holding button
-                    SetCursorPos(to.X, to.Y);
-                    Thread.Sleep(50);
-                    
-                    // Release mouse button
-                    mouse_event(MOUSEEVENTF_LEFTUP, to.X, to.Y, 0, 0);
-                    
+
+                    if (!TrySendWindowDrag(from, to))
+                    {
+                        SetCursorPos(from.X, from.Y);
+                        Thread.Sleep(50);
+                        mouse_event(MOUSEEVENTF_LEFTDOWN, from.X, from.Y, 0, 0);
+                        Thread.Sleep(50);
+                        SetCursorPos(to.X, to.Y);
+                        Thread.Sleep(50);
+                        mouse_event(MOUSEEVENTF_LEFTUP, to.X, to.Y, 0, 0);
+                    }
+
                     _logger.LogInformation("Dragged from ({FromX}, {FromY}) to ({ToX}, {ToY})", from.X, from.Y, to.X, to.Y);
                 }
                 catch (Exception ex)
@@ -308,45 +352,46 @@ namespace AutomationTool.Services
             byte virtualKey = (byte)(vkCode & 0xFF);
             byte shiftState = (byte)(vkCode >> 8);
 
-            // Check if shift is needed
-            if ((shiftState & 1) != 0)
+            void SendShift(bool down)
             {
-                keybd_event(0x10, 0, KEYEVENTF_KEYDOWN, 0); // Shift down
+                SendKeyToTarget(0x10, down ? KEYEVENTF_KEYDOWN : KEYEVENTF_KEYUP);
             }
 
-            // Press and release the key
-            keybd_event(virtualKey, 0, KEYEVENTF_KEYDOWN, 0);
-            Thread.Sleep(10);
-            keybd_event(virtualKey, 0, KEYEVENTF_KEYUP, 0);
+            bool requiresShift = (shiftState & 1) != 0;
 
-            // Release shift if it was pressed
-            if ((shiftState & 1) != 0)
+            if (requiresShift)
             {
-                keybd_event(0x10, 0, KEYEVENTF_KEYUP, 0); // Shift up
+                SendShift(true);
+            }
+
+            SendKeyToTarget(virtualKey, KEYEVENTF_KEYDOWN);
+            Thread.Sleep(10);
+            SendKeyToTarget(virtualKey, KEYEVENTF_KEYUP);
+
+            if (requiresShift)
+            {
+                SendShift(false);
             }
         }
 
         private void HandleSpecialCharacter(char c)
         {
-            switch (c)
+            var key = c switch
             {
-                case '\n':
-                case '\r':
-                    keybd_event(0x0D, 0, KEYEVENTF_KEYDOWN, 0); // Enter down
-                    Thread.Sleep(10);
-                    keybd_event(0x0D, 0, KEYEVENTF_KEYUP, 0);   // Enter up
-                    break;
-                case '\t':
-                    keybd_event(0x09, 0, KEYEVENTF_KEYDOWN, 0); // Tab down
-                    Thread.Sleep(10);
-                    keybd_event(0x09, 0, KEYEVENTF_KEYUP, 0);   // Tab up
-                    break;
-                case '\b':
-                    keybd_event(0x08, 0, KEYEVENTF_KEYDOWN, 0); // Backspace down
-                    Thread.Sleep(10);
-                    keybd_event(0x08, 0, KEYEVENTF_KEYUP, 0);   // Backspace up
-                    break;
+                '\n' or '\r' => (byte)0x0D,
+                '\t' => (byte)0x09,
+                '\b' => (byte)0x08,
+                _ => (byte)0
+            };
+
+            if (key == 0)
+            {
+                return;
             }
+
+            SendKeyToTarget(key, KEYEVENTF_KEYDOWN);
+            Thread.Sleep(10);
+            SendKeyToTarget(key, KEYEVENTF_KEYUP);
         }
 
         private List<KeyInfo> ParseKeySequence(string keys)
@@ -391,12 +436,200 @@ namespace AutomationTool.Services
             public byte VirtualKey { get; set; }
             public bool IsModifier { get; set; }
         }
+
+        private void SendKeyToTarget(byte virtualKey, int keyEvent)
+        {
+            keybd_event(virtualKey, 0, keyEvent, 0);
+        }
+
+        private bool IsModifierVirtualKey(byte virtualKey)
+        {
+            return virtualKey is 0x10 or 0x11 or 0x12 or 0x5B;
+        }
+
+        private int BuildKeyLParam(uint scanCode, bool keyUp)
+        {
+            var repeatCount = 1;
+            var extended = (scanCode & 0x100) != 0;
+            var contextCode = 0;
+            var previousState = keyUp ? 1 : 0;
+            var transitionState = keyUp ? 1 : 0;
+
+            int lParam = repeatCount
+                | ((int)scanCode << 16)
+                | (extended ? 1 << 24 : 0)
+                | (contextCode << 29)
+                | (previousState << 30)
+                | (transitionState << 31);
+
+            return lParam;
+        }
+
+        private Point NormalizeToTargetWindow(int x, int y)
+        {
+            if (!HasTargetWindow)
+            {
+                return new Point(x, y);
+            }
+
+            if (!IsWindow(_targetWindowHandle))
+            {
+                ClearTargetWindow();
+                return new Point(x, y);
+            }
+
+            var point = new POINT { X = x, Y = y };
+            if (!ScreenToClient(_targetWindowHandle, ref point))
+            {
+                return new Point(x, y);
+            }
+
+            return new Point(point.X, point.Y);
+        }
+
+        private bool TrySendWindowClick(int x, int y, int downFlag, int upFlag, bool doubleClick = false)
+        {
+            if (!HasTargetWindow)
+            {
+                return false;
+            }
+
+            var normalized = NormalizeToTargetWindow(x, y);
+            var lParam = BuildMouseLParam(normalized.X, normalized.Y);
+
+            var downMessage = downFlag switch
+            {
+                MOUSEEVENTF_LEFTDOWN => WM_LBUTTONDOWN,
+                MOUSEEVENTF_RIGHTDOWN => WM_RBUTTONDOWN,
+                _ => WM_MOUSEMOVE
+            };
+
+            var upMessage = upFlag switch
+            {
+                MOUSEEVENTF_LEFTUP => WM_LBUTTONUP,
+                MOUSEEVENTF_RIGHTUP => WM_RBUTTONUP,
+                _ => WM_MOUSEMOVE
+            };
+
+            var downWParam = downFlag switch
+            {
+                MOUSEEVENTF_LEFTDOWN => new IntPtr(MK_LBUTTON),
+                MOUSEEVENTF_RIGHTDOWN => new IntPtr(MK_RBUTTON),
+                _ => IntPtr.Zero
+            };
+
+            PostMessage(_targetWindowHandle, WM_MOUSEMOVE, downWParam, new IntPtr(lParam));
+
+            if (downMessage != WM_MOUSEMOVE)
+            {
+                PostMessage(_targetWindowHandle, downMessage, downWParam, new IntPtr(lParam));
+            }
+
+            if (doubleClick && downMessage == WM_LBUTTONDOWN)
+            {
+                PostMessage(_targetWindowHandle, WM_LBUTTONUP, IntPtr.Zero, new IntPtr(lParam));
+                PostMessage(_targetWindowHandle, WM_LBUTTONDBLCLK, new IntPtr(MK_LBUTTON), new IntPtr(lParam));
+                PostMessage(_targetWindowHandle, WM_LBUTTONUP, IntPtr.Zero, new IntPtr(lParam));
+                return true;
+            }
+
+            if (doubleClick && downMessage == WM_RBUTTONDOWN)
+            {
+                PostMessage(_targetWindowHandle, WM_RBUTTONUP, IntPtr.Zero, new IntPtr(lParam));
+                PostMessage(_targetWindowHandle, WM_RBUTTONDBLCLK, new IntPtr(MK_RBUTTON), new IntPtr(lParam));
+                PostMessage(_targetWindowHandle, WM_RBUTTONUP, IntPtr.Zero, new IntPtr(lParam));
+                return true;
+            }
+
+            if (upMessage != WM_MOUSEMOVE)
+            {
+                PostMessage(_targetWindowHandle, upMessage, IntPtr.Zero, new IntPtr(lParam));
+            }
+
+            return true;
+        }
+
+        private bool TrySendMouseMove(int x, int y)
+        {
+            if (!HasTargetWindow)
+            {
+                return false;
+            }
+
+            var normalized = NormalizeToTargetWindow(x, y);
+            var lParam = BuildMouseLParam(normalized.X, normalized.Y);
+            PostMessage(_targetWindowHandle, WM_MOUSEMOVE, IntPtr.Zero, new IntPtr(lParam));
+            return true;
+        }
+
+        private bool TrySendWindowDrag(Point from, Point to)
+        {
+            if (!HasTargetWindow)
+            {
+                return false;
+            }
+
+            var start = NormalizeToTargetWindow(from.X, from.Y);
+            var end = NormalizeToTargetWindow(to.X, to.Y);
+            var startLParam = BuildMouseLParam(start.X, start.Y);
+            var endLParam = BuildMouseLParam(end.X, end.Y);
+
+            PostMessage(_targetWindowHandle, WM_MOUSEMOVE, IntPtr.Zero, new IntPtr(startLParam));
+            PostMessage(_targetWindowHandle, WM_LBUTTONDOWN, new IntPtr(MK_LBUTTON), new IntPtr(startLParam));
+            PostMessage(_targetWindowHandle, WM_MOUSEMOVE, new IntPtr(MK_LBUTTON), new IntPtr(endLParam));
+            PostMessage(_targetWindowHandle, WM_LBUTTONUP, IntPtr.Zero, new IntPtr(endLParam));
+
+            return true;
+        }
+
+        private int BuildMouseLParam(int x, int y)
+        {
+            return (y << 16) | (x & 0xFFFF);
+        }
+
+        public void SetTargetWindow(IntPtr windowHandle)
+        {
+            lock (_targetWindowLock)
+            {
+                _targetWindowHandle = windowHandle;
+            }
+        }
+
+        public void ClearTargetWindow()
+        {
+            lock (_targetWindowLock)
+            {
+                _targetWindowHandle = IntPtr.Zero;
+            }
+        }
+
+        public IntPtr GetTargetWindow()
+        {
+            lock (_targetWindowLock)
+            {
+                return _targetWindowHandle;
+            }
+        }
+
+        public bool HasTargetWindow
+        {
+            get
+            {
+                lock (_targetWindowLock)
+                {
+                    return _targetWindowHandle != IntPtr.Zero;
+                }
+            }
+        }
     }
 
     // Cross-platform automation engine using Windows Forms SendKeys
     public class ManagedAutomationEngine : IAutomationEngine
     {
         private readonly ILogger<ManagedAutomationEngine> _logger;
+        private readonly object _targetWindowLock = new();
+        private IntPtr _targetWindowHandle;
+        private bool _loggedTargetWarning;
 
         public ManagedAutomationEngine(ILogger<ManagedAutomationEngine> logger)
         {
@@ -416,12 +649,13 @@ namespace AutomationTool.Services
                 {
                     _logger.LogDebug("Simulating click at position ({X}, {Y})", x, y);
                     
-                    // Move cursor and simulate click
-                    Cursor.Position = new Point(x, y);
-                    Thread.Sleep(10);
-                    
-                    // Simulate mouse click using Windows Forms
-                    Application.DoEvents();
+                    if (!VerifyWindowTargetingSupport())
+                    {
+                        Cursor.Position = new Point(x, y);
+                        Thread.Sleep(10);
+
+                        Application.DoEvents();
+                    }
                     
                     _logger.LogInformation("Simulated click at position ({X}, {Y})", x, y);
                 }
@@ -447,9 +681,12 @@ namespace AutomationTool.Services
                 try
                 {
                     _logger.LogDebug("Simulating right-click at position ({X}, {Y})", location.X, location.Y);
-                    Cursor.Position = location;
-                    Thread.Sleep(10);
-                    Application.DoEvents();
+                    if (!VerifyWindowTargetingSupport())
+                    {
+                        Cursor.Position = location;
+                        Thread.Sleep(10);
+                        Application.DoEvents();
+                    }
                     _logger.LogInformation("Simulated right-click at position ({X}, {Y})", location.X, location.Y);
                 }
                 catch (Exception ex)
@@ -485,7 +722,10 @@ namespace AutomationTool.Services
                 try
                 {
                     _logger.LogDebug("Simulating key sequence: {Keys}", keys);
-                    SendKeys.SendWait(keys);
+                    if (!VerifyWindowTargetingSupport())
+                    {
+                        SendKeys.SendWait(keys);
+                    }
                     _logger.LogInformation("Simulated key sequence: {Keys}", keys);
                 }
                 catch (Exception ex)
@@ -510,7 +750,10 @@ namespace AutomationTool.Services
                 try
                 {
                     _logger.LogDebug("Moving cursor to position ({X}, {Y})", location.X, location.Y);
-                    Cursor.Position = location;
+                    if (!VerifyWindowTargetingSupport())
+                    {
+                        Cursor.Position = location;
+                    }
                     _logger.LogInformation("Moved cursor to position ({X}, {Y})", location.X, location.Y);
                 }
                 catch (Exception ex)
@@ -528,13 +771,12 @@ namespace AutomationTool.Services
                 try
                 {
                     _logger.LogDebug("Simulating drag from ({FromX}, {FromY}) to ({ToX}, {ToY})", from.X, from.Y, to.X, to.Y);
-                    
-                    // Move to start position
-                    Cursor.Position = from;
-                    await Task.Delay(50);
-                    
-                    // Simulate drag motion (limited without direct mouse control)
-                    Cursor.Position = to;
+                    if (!VerifyWindowTargetingSupport())
+                    {
+                        Cursor.Position = from;
+                        await Task.Delay(50);
+                        Cursor.Position = to;
+                    }
                     
                     _logger.LogInformation("Simulated drag from ({FromX}, {FromY}) to ({ToX}, {ToY})", from.X, from.Y, to.X, to.Y);
                 }
@@ -549,6 +791,61 @@ namespace AutomationTool.Services
         public Point GetMousePosition()
         {
             return Cursor.Position;
+        }
+
+        public void SetTargetWindow(IntPtr windowHandle)
+        {
+            lock (_targetWindowLock)
+            {
+                _targetWindowHandle = windowHandle;
+                _loggedTargetWarning = false;
+            }
+        }
+
+        public void ClearTargetWindow()
+        {
+            lock (_targetWindowLock)
+            {
+                _targetWindowHandle = IntPtr.Zero;
+            }
+        }
+
+        public IntPtr GetTargetWindow()
+        {
+            lock (_targetWindowLock)
+            {
+                return _targetWindowHandle;
+            }
+        }
+
+        public bool HasTargetWindow
+        {
+            get
+            {
+                lock (_targetWindowLock)
+                {
+                    return _targetWindowHandle != IntPtr.Zero;
+                }
+            }
+        }
+
+        private bool VerifyWindowTargetingSupport()
+        {
+            if (!HasTargetWindow)
+            {
+                return false;
+            }
+
+            lock (_targetWindowLock)
+            {
+                if (_targetWindowHandle != IntPtr.Zero && !_loggedTargetWarning)
+                {
+                    _loggedTargetWarning = true;
+                    _logger.LogWarning("Window targeting is not supported by ManagedAutomationEngine. Falling back to Cursor operations.");
+                }
+            }
+
+            return false;
         }
     }
 }

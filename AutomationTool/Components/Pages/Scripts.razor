@@ -1,12 +1,13 @@
 @page "/scripts"
-@rendermode InteractiveServer
 @using AutomationTool.Services
 @using AutomationTool.Models
+@using Microsoft.Extensions.Logging
 @inject IScriptStorageService ScriptStorage
 @inject IScriptExecutionService ScriptExecution
 @inject IScreenshotService ScreenshotService
 @inject NavigationManager Navigation
 @inject ILogger<Scripts> _logger
+@inject IWindowEnumerationService WindowEnumeration
 
 <PageTitle>Script Management</PageTitle>
 
@@ -130,13 +131,40 @@
 
                     <!-- Script Basic Information -->
                     <div class="row mb-4">
-                        <div class="col-md-6">
+                        <div class="col-lg-6">
                             <label class="form-label">Script Name *</label>
                             <input type="text" class="form-control" @bind="selectedScript.Name" placeholder="Enter script name">
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-lg-6">
                             <label class="form-label">Description</label>
                             <input type="text" class="form-control" @bind="selectedScript.Description" placeholder="Brief description">
+                        </div>
+                    </div>
+
+                    <!-- Target Window Selection -->
+                    <div class="card mb-4">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">🎯 Target Window</h6>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="targetWindowEnabled" @bind="TargetWindowEnabled">
+                                <label class="form-check-label" for="targetWindowEnabled">Enable</label>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            @if (TargetWindowEnabled)
+                            {
+                            <WindowPicker SelectedHandle="selectedWindowHandle" SelectedHandleChanged="OnWindowHandleChanged" OnSelectionChanged="OnWindowSelected" />
+                                @if (!string.IsNullOrEmpty(selectedWindowDescription))
+                                {
+                                    <div class="small text-muted mt-2">@selectedWindowDescription</div>
+                                }
+                            }
+                            else
+                            {
+                                <div class="text-muted small">
+                                    Window selection disabled. Script will interact with the current foreground window.
+                                </div>
+                            }
                         </div>
                     </div>
 
@@ -702,6 +730,153 @@
     private byte[]? capturedTemplateData;
     private System.Drawing.Rectangle capturedRegion;
     private ScriptCondition? currentConditionForTemplate;
+    private IntPtr selectedWindowHandle;
+    private string selectedWindowDescription = string.Empty;
+    private bool _targetWindowEnabled;
+    private bool isLoadingWindowState;
+    private bool TargetWindowEnabled
+    {
+        get => _targetWindowEnabled;
+        set
+        {
+            if (_targetWindowEnabled == value)
+            {
+                return;
+            }
+
+            _targetWindowEnabled = value;
+
+            HandleTargetWindowToggle();
+        }
+    }
+
+    private void HandleTargetWindowToggle()
+    {
+        ExecuteWithTargetWindowState(() =>
+        {
+            if (!_targetWindowEnabled)
+            {
+                selectedWindowHandle = IntPtr.Zero;
+                selectedWindowDescription = string.Empty;
+            }
+
+            PersistWindowSelectionToScript();
+        });
+    }
+
+    private void ExecuteWithTargetWindowState(Action action)
+    {
+        if (isLoadingWindowState)
+        {
+            return;
+        }
+
+        try
+        {
+            isLoadingWindowState = true;
+            action();
+        }
+        finally
+        {
+            isLoadingWindowState = false;
+        }
+    }
+
+    private void LoadWindowSelectionFromScript()
+    {
+        if (selectedScript == null)
+        {
+            return;
+        }
+
+        ExecuteWithTargetWindowState(() =>
+        {
+            TargetWindowEnabled = selectedScript.UseWindowTargeting;
+
+            if (selectedScript.UseWindowTargeting && !string.IsNullOrEmpty(selectedScript.TargetWindowHandle) &&
+                long.TryParse(selectedScript.TargetWindowHandle, out var handleValue))
+            {
+                selectedWindowHandle = new IntPtr(handleValue);
+                selectedWindowDescription = selectedScript.TargetWindowDescription ?? string.Empty;
+            }
+            else
+            {
+                selectedWindowHandle = IntPtr.Zero;
+                selectedWindowDescription = string.Empty;
+            }
+        });
+    }
+
+    private void PersistWindowSelectionToScript()
+    {
+        if (selectedScript == null)
+        {
+            return;
+        }
+
+        selectedScript.UseWindowTargeting = TargetWindowEnabled;
+        selectedScript.TargetWindowHandle = TargetWindowEnabled && selectedWindowHandle != IntPtr.Zero
+            ? selectedWindowHandle.ToInt64().ToString()
+            : null;
+        selectedScript.TargetWindowDescription = TargetWindowEnabled ? selectedWindowDescription : null;
+    }
+
+    private static AutomationScript CloneScript(AutomationScript script)
+    {
+        return new AutomationScript
+        {
+            Id = script.Id,
+            Name = script.Name,
+            Description = script.Description,
+            CreatedAt = script.CreatedAt,
+            ModifiedAt = script.ModifiedAt,
+            Steps = script.Steps.Select(CloneStep).ToList(),
+            IsInfiniteRepeat = script.IsInfiniteRepeat,
+            RepeatCount = script.RepeatCount,
+            DelayBetweenRepeats = script.DelayBetweenRepeats,
+            UseWindowTargeting = script.UseWindowTargeting,
+            TargetWindowHandle = script.TargetWindowHandle,
+            TargetWindowDescription = script.TargetWindowDescription
+        };
+    }
+
+    private static ScriptStep CloneStep(ScriptStep step)
+    {
+        return new ScriptStep
+        {
+            Id = step.Id,
+            Order = step.Order,
+            Type = step.Type,
+            Name = step.Name,
+            Parameters = new Dictionary<string, object>(step.Parameters),
+            Conditions = step.Conditions.Select(CloneCondition).ToList(),
+            Actions = step.Actions.Select(CloneAction).ToList(),
+            ElseStepId = step.ElseStepId,
+            IsEnabled = step.IsEnabled
+        };
+    }
+
+    private static ScriptCondition CloneCondition(ScriptCondition condition)
+    {
+        return new ScriptCondition
+        {
+            Id = condition.Id,
+            Type = condition.Type,
+            Parameters = new Dictionary<string, object>(condition.Parameters),
+            Operator = condition.Operator
+        };
+    }
+
+    private static ScriptAction CloneAction(ScriptAction action)
+    {
+        return new ScriptAction
+        {
+            Id = action.Id,
+            Type = action.Type,
+            Parameters = new Dictionary<string, object>(action.Parameters),
+            DelayAfter = action.DelayAfter
+        };
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -724,15 +899,22 @@
             Steps = new List<ScriptStep>(),
             RepeatCount = 1,
             IsInfiniteRepeat = false,
-            DelayBetweenRepeats = 0
+            DelayBetweenRepeats = 0,
+            UseWindowTargeting = false,
+            TargetWindowHandle = null,
+            TargetWindowDescription = null
         };
         isEditing = false;
+        TargetWindowEnabled = false;
+        selectedWindowHandle = IntPtr.Zero;
+        selectedWindowDescription = string.Empty;
     }
 
     private void EditScript(AutomationScript script)
     {
-        selectedScript = script;
+        selectedScript = CloneScript(script);
         isEditing = true;
+        LoadWindowSelectionFromScript();
     }
 
     private void CancelEdit()
@@ -761,6 +943,9 @@
                 selectedScript.Steps[i].Order = i + 1;
             }
 
+            PersistWindowSelectionToScript();
+
+            selectedScript.ModifiedAt = DateTime.Now;
             await ScriptStorage.SaveScriptAsync(selectedScript);
             await LoadScripts();
             
@@ -1952,5 +2137,21 @@
         currentConditionForTemplate = null;
         capturedRegion = default;
         StateHasChanged();
+    }
+
+    private async Task OnWindowHandleChanged(IntPtr handle)
+    {
+        selectedWindowHandle = handle;
+        PersistWindowSelectionToScript();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private Task OnWindowSelected(WindowInfo? window)
+    {
+        selectedWindowDescription = window == null
+            ? string.Empty
+            : $"{window.Title} ({window.ProcessName}) [{window.HandleHex}]";
+        PersistWindowSelectionToScript();
+        return Task.CompletedTask;
     }
 }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AutomationTool.Models;
 using System.Drawing;
+using Microsoft.Extensions.Logging;
 
 namespace AutomationTool.Services
 {
@@ -12,6 +13,7 @@ namespace AutomationTool.Services
         Task ResumeScriptAsync(string scriptId);
         ScriptExecutionState? GetExecutionState(string scriptId);
         List<ScriptExecutionState> GetAllExecutionStates();
+        void OverrideTargetWindow(IntPtr? handle);
         event EventHandler<ExecutionLog>? LogGenerated;
         event EventHandler<ScriptExecutionState>? StateChanged;
     }
@@ -23,6 +25,8 @@ namespace AutomationTool.Services
         private readonly IScreenshotService _screenshotService;
         private readonly IScriptStorageService _scriptStorage;
         private readonly ILogger<ScriptExecutionService> _logger;
+        private readonly object _runtimeTargetLock = new();
+        private IntPtr _runtimeTargetHandle;
 
         private readonly Dictionary<string, ScriptExecutionState> _executionStates;
         private readonly Dictionary<string, CancellationTokenSource> _cancellationTokens;
@@ -49,23 +53,39 @@ namespace AutomationTool.Services
             _executionTasks = new Dictionary<string, Task>();
         }
 
+        public void OverrideTargetWindow(IntPtr? handle)
+        {
+            lock (_runtimeTargetLock)
+            {
+                _runtimeTargetHandle = handle ?? IntPtr.Zero;
+
+                if (_runtimeTargetHandle == IntPtr.Zero)
+                {
+                    _automationEngine.ClearTargetWindow();
+                }
+                else
+                {
+                    _automationEngine.SetTargetWindow(_runtimeTargetHandle);
+                }
+            }
+        }
+
         public async Task<string> StartScriptAsync(string scriptId)
         {
             try
             {
+                _logger.LogInformation("StartScriptAsync invoked for {ScriptId}", scriptId);
                 var script = await _scriptStorage.GetScriptAsync(scriptId);
                 if (script == null)
                 {
                     throw new ArgumentException($"Script with ID {scriptId} not found");
                 }
 
-                // Stop any existing execution
                 if (_executionStates.ContainsKey(scriptId))
                 {
                     await StopScriptAsync(scriptId);
                 }
 
-                // Create new execution state
                 var executionState = new ScriptExecutionState
                 {
                     ScriptId = scriptId,
@@ -76,14 +96,13 @@ namespace AutomationTool.Services
 
                 _executionStates[scriptId] = executionState;
 
-                // Create cancellation token
                 var cancellationTokenSource = new CancellationTokenSource();
                 _cancellationTokens[scriptId] = cancellationTokenSource;
 
-                // Start execution task
                 var executionTask = ExecuteScriptAsync(script, executionState, cancellationTokenSource.Token);
                 _executionTasks[scriptId] = executionTask;
 
+                _logger.LogDebug("Execution task started for {ScriptId}. Status={Status}", scriptId, executionState.Status);
                 OnStateChanged(executionState);
                 LogExecution(scriptId, string.Empty, AutomationTool.Models.LogLevel.Info, $"Script '{script.Name}' started");
 
@@ -92,6 +111,7 @@ namespace AutomationTool.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error starting script {ScriptId}", scriptId);
+                LogExecution(scriptId, string.Empty, AutomationTool.Models.LogLevel.Error, $"Failed to start script: {ex.Message}");
                 throw;
             }
         }
@@ -217,6 +237,7 @@ namespace AutomationTool.Services
 
         public List<ScriptExecutionState> GetAllExecutionStates()
         {
+            _logger.LogDebug("GetAllExecutionStates called. Count={Count}", _executionStates.Count);
             return _executionStates.Values.ToList();
         }
 
@@ -224,24 +245,24 @@ namespace AutomationTool.Services
         {
             try
             {
-                // Initialize repeat execution state
+                _logger.LogInformation("ExecuteScriptAsync started for {ScriptId}. RepeatMode={Mode}", script.Id, script.IsInfiniteRepeat ? "Infinite" : script.RepeatCount.ToString());
+                ApplyWindowTargeting(script);
+
                 state.TotalRepeats = script.IsInfiniteRepeat ? int.MaxValue : script.RepeatCount;
                 state.IsInfiniteRepeat = script.IsInfiniteRepeat;
                 state.CurrentRepeat = 0;
 
-                LogExecution(script.Id, string.Empty, Models.LogLevel.Info, 
+                LogExecution(script.Id, string.Empty, Models.LogLevel.Info,
                     script.IsInfiniteRepeat ? "Starting infinite script execution" : $"Starting script execution with {script.RepeatCount} repeat(s)");
 
-                // Main repeat loop
                 while ((state.CurrentRepeat < state.TotalRepeats || script.IsInfiniteRepeat) && !cancellationToken.IsCancellationRequested)
                 {
                     state.CurrentRepeat++;
                     state.LastRepeatTime = DateTime.Now;
 
-                    LogExecution(script.Id, string.Empty, Models.LogLevel.Info, 
+                    LogExecution(script.Id, string.Empty, Models.LogLevel.Info,
                         script.IsInfiniteRepeat ? $"Starting repeat #{state.CurrentRepeat}" : $"Starting repeat {state.CurrentRepeat}/{script.RepeatCount}");
 
-                    // Execute single script iteration
                     var success = await ExecuteSingleIterationAsync(script, state, cancellationToken);
 
                     if (!success)
@@ -250,13 +271,11 @@ namespace AutomationTool.Services
                         break;
                     }
 
-                    // Check if we should continue (for finite repeats)
                     if (!script.IsInfiniteRepeat && state.CurrentRepeat >= script.RepeatCount)
                     {
                         break;
                     }
 
-                    // Apply delay between repeats if configured
                     if (script.DelayBetweenRepeats > 0 && (state.CurrentRepeat < state.TotalRepeats || script.IsInfiniteRepeat))
                     {
                         LogExecution(script.Id, string.Empty, Models.LogLevel.Info, $"Waiting {script.DelayBetweenRepeats}ms before next repeat");
@@ -266,15 +285,16 @@ namespace AutomationTool.Services
                     OnStateChanged(state);
                 }
 
-                // Script completed
                 state.Status = ExecutionStatus.Completed.ToString();
-                LogExecution(script.Id, string.Empty, Models.LogLevel.Info, 
+                LogExecution(script.Id, string.Empty, Models.LogLevel.Info,
                     script.IsInfiniteRepeat ? $"Script execution stopped after {state.CurrentRepeat} repeats" : "Script execution completed");
+                _logger.LogInformation("Script {ScriptId} completed with status {Status}", script.Id, state.Status);
             }
             catch (OperationCanceledException)
             {
                 state.Status = ExecutionStatus.Stopped.ToString();
                 LogExecution(script.Id, string.Empty, Models.LogLevel.Info, $"Script execution cancelled after {state.CurrentRepeat} repeat(s)");
+                _logger.LogInformation("Script {ScriptId} cancelled after {Repeat} repeats", script.Id, state.CurrentRepeat);
             }
             catch (Exception ex)
             {
@@ -284,8 +304,50 @@ namespace AutomationTool.Services
             }
             finally
             {
+                ClearWindowTargeting();
+                _logger.LogDebug("ExecuteScriptAsync finalising for {ScriptId} with status {Status}", script.Id, state.Status);
                 OnStateChanged(state);
             }
+        }
+
+        private void ApplyWindowTargeting(AutomationScript script)
+        {
+            var handle = IntPtr.Zero;
+
+            lock (_runtimeTargetLock)
+            {
+                handle = _runtimeTargetHandle;
+            }
+
+            if (handle == IntPtr.Zero && script.UseWindowTargeting &&
+                !string.IsNullOrEmpty(script.TargetWindowHandle) &&
+                long.TryParse(script.TargetWindowHandle, out var scriptHandle))
+            {
+                handle = new IntPtr(scriptHandle);
+            }
+
+            if (handle != IntPtr.Zero)
+            {
+                _automationEngine.SetTargetWindow(handle);
+            }
+            else
+            {
+                _automationEngine.ClearTargetWindow();
+            }
+        }
+
+        private void ClearWindowTargeting()
+        {
+            lock (_runtimeTargetLock)
+            {
+                if (_runtimeTargetHandle != IntPtr.Zero)
+                {
+                    _automationEngine.SetTargetWindow(_runtimeTargetHandle);
+                    return;
+                }
+            }
+
+            _automationEngine.ClearTargetWindow();
         }
 
         private async Task<bool> ExecuteSingleIterationAsync(AutomationScript script, ScriptExecutionState state, CancellationToken cancellationToken)
