@@ -134,19 +134,21 @@ namespace AutomationTool.Services
             return _windows.Values.ToList().AsReadOnly();
         }
 
-        public Task UpdateWindowCacheAsync()
+        public async Task UpdateWindowCacheAsync()
         {
-            return Task.Run(() =>
-            {
-                RefreshWindowCache();
-                UpdateForegroundWindow();
-            });
+            var enumeratedWindows = await EnumerateWindowsAsync().ConfigureAwait(false);
+            RefreshWindowCache(enumeratedWindows);
+            UpdateForegroundWindow();
         }
 
         public void RefreshWindowCache()
         {
-            var enumeratedWindows = EnumerateWindowsAsync().Result;
+            var enumeratedWindows = EnumerateWindowsAsync().GetAwaiter().GetResult();
+            RefreshWindowCache(enumeratedWindows);
+        }
 
+        private void RefreshWindowCache(IEnumerable<WindowInfo> enumeratedWindows)
+        {
             var handles = new HashSet<IntPtr>();
 
             foreach (var window in enumeratedWindows)
@@ -169,7 +171,7 @@ namespace AutomationTool.Services
 
         public bool TryGetWindow(IntPtr handle, out WindowInfo windowInfo)
         {
-            if (_windows.TryGetValue(handle, out windowInfo))
+            if (_windows.TryGetValue(handle, out windowInfo!))
             {
                 return true;
             }
@@ -193,7 +195,7 @@ namespace AutomationTool.Services
                 return true;
             }
 
-            windowInfo = null!;
+            windowInfo = default!;
             return false;
         }
 

@@ -20,8 +20,6 @@ namespace AutomationTool.Utils
         [DllImport("user32.dll")]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-        public event EventHandler<string>? HotkeyPressed;
-
         public GlobalHotkeyManager()
         {
             _window = new HotkeyWindow();

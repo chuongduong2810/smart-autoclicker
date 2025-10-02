@@ -219,7 +219,7 @@
     private string statusClass = string.Empty;
     private DotNetObjectReference<Screenshot>? selfRef;
 
-    protected override async Task OnInitializedAsync()
+    protected override Task OnInitializedAsync()
     {
         try
         {
@@ -239,14 +239,18 @@
             _logger?.LogError(ex, "Error during component initialization");
             ShowStatus($"Error initializing: {ex.Message}", "alert-danger");
         }
+
+        return Task.CompletedTask;
     }
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    protected override Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
             selfRef = DotNetObjectReference.Create(this);
         }
+
+        return Task.CompletedTask;
     }
 
     private void SetCaptureMode(CaptureMode mode)

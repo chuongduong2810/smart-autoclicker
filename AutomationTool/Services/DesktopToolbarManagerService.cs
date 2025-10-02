@@ -38,10 +38,13 @@ namespace AutomationTool.Services
                     _scriptStorage != null,
                     _toolbarService != null);
 
-                _toolbarService.ToolbarActionRequested += OnToolbarActionRequested;
+                if (_toolbarService != null)
+                {
+                    _toolbarService.ToolbarActionRequested += OnToolbarActionRequested;
+                }
 
                 // Subscribe to events
-                _scriptExecution.StateChanged += OnScriptStateChanged;
+                _scriptExecution!.StateChanged += OnScriptStateChanged;
 
                 _logger.LogInformation("Desktop toolbar manager started");
                 _logger.LogInformation("Toolbar with global hotkeys (F9/F10/F11) will appear automatically when a script starts running");
@@ -50,6 +53,13 @@ namespace AutomationTool.Services
                 bool hasLoggedNoActiveScripts = false;
                 while (!stoppingToken.IsCancellationRequested)
                 {
+                    if (_scriptExecution == null || _scriptStorage == null)
+                    {
+                        _logger.LogWarning("Required services unavailable; skipping toolbar checks");
+                        await Task.Delay(1000, stoppingToken);
+                        continue;
+                    }
+
                     // Check for active executions and show/hide toolbar accordingly
                     var activeStates = _scriptExecution.GetAllExecutionStates()
                         .Where(s => s.Status == "Running" || s.Status == "Paused")
@@ -61,8 +71,11 @@ namespace AutomationTool.Services
                         var activeState = activeStates.First();
                         var script = await _scriptStorage.GetScriptAsync(activeState.ScriptId);
                         _logger.LogDebug("Active script detected: {ScriptName} - {Status}, showing toolbar", script?.Name ?? "Unknown", activeState.Status);
-                        await _toolbarService.ShowToolbarAsync();
-                        await _toolbarService.UpdateToolbarStateAsync(activeState, script);
+                        if (_toolbarService != null)
+                        {
+                            await _toolbarService.ShowToolbarAsync();
+                            await _toolbarService.UpdateToolbarStateAsync(activeState, script);
+                        }
                     }
                     else
                     {
@@ -71,7 +84,10 @@ namespace AutomationTool.Services
                             _logger.LogDebug("No active scripts, toolbar hidden. Start a script to see the toolbar.");
                             hasLoggedNoActiveScripts = true;
                         }
-                        await _toolbarService.HideToolbarAsync();
+                        if (_toolbarService != null)
+                        {
+                            await _toolbarService.HideToolbarAsync();
+                        }
                     }
 
                     await Task.Delay(1000, stoppingToken);

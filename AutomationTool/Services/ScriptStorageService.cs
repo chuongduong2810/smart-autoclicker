@@ -110,7 +110,7 @@ namespace AutomationTool.Services
             }
         }
 
-        public async Task DeleteScriptAsync(string scriptId)
+        public Task DeleteScriptAsync(string scriptId)
         {
             try
             {
@@ -131,6 +131,8 @@ namespace AutomationTool.Services
                 _logger.LogError(ex, "Error deleting script: {ScriptId}", scriptId);
                 throw;
             }
+
+            return Task.CompletedTask;
         }
 
         public async Task<TemplateImage?> GetTemplateImageAsync(string templateImageId)
@@ -248,7 +250,7 @@ namespace AutomationTool.Services
             }
         }
 
-        public async Task DeleteTemplateImageAsync(string templateImageId)
+        public Task DeleteTemplateImageAsync(string templateImageId)
         {
             try
             {
@@ -274,6 +276,8 @@ namespace AutomationTool.Services
                 _logger.LogError(ex, "Error deleting template image: {TemplateImageId}", templateImageId);
                 throw;
             }
+
+            return Task.CompletedTask;
         }
     }
 

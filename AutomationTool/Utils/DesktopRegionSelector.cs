@@ -77,7 +77,7 @@ namespace AutomationTool.Utils
 
     public class FullScreenOverlay : Form
     {
-        public event EventHandler<Rectangle> RegionSelected;
+        public event EventHandler<Rectangle>? RegionSelected;
         
         private bool _isSelecting = false;
         private Point _startPoint;
@@ -117,7 +117,7 @@ namespace AutomationTool.Utils
                          ControlStyles.DoubleBuffer, true);
         }
         
-        private void OnMouseDown(object sender, MouseEventArgs e)
+        private void OnMouseDown(object? sender, MouseEventArgs e)
         {
             if (e.Button == MouseButtons.Left)
             {
@@ -128,7 +128,7 @@ namespace AutomationTool.Utils
             }
         }
         
-        private void OnMouseMove(object sender, MouseEventArgs e)
+        private void OnMouseMove(object? sender, MouseEventArgs e)
         {
             if (_isSelecting)
             {
@@ -138,7 +138,7 @@ namespace AutomationTool.Utils
             }
         }
         
-        private void OnMouseUp(object sender, MouseEventArgs e)
+        private void OnMouseUp(object? sender, MouseEventArgs e)
         {
             if (_isSelecting && e.Button == MouseButtons.Left)
             {
@@ -156,7 +156,7 @@ namespace AutomationTool.Utils
             }
         }
         
-        private void OnKeyDown(object sender, KeyEventArgs e)
+        private void OnKeyDown(object? sender, KeyEventArgs e)
         {
             if (e.KeyCode == Keys.Escape)
             {
@@ -164,7 +164,7 @@ namespace AutomationTool.Utils
             }
         }
         
-        private void OnPaint(object sender, PaintEventArgs e)
+        private void OnPaint(object? sender, PaintEventArgs e)
         {
             if (_isSelecting && _selectionRect.Width > 0 && _selectionRect.Height > 0)
             {

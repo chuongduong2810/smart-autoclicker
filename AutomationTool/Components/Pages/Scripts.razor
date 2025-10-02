@@ -725,7 +725,6 @@
     private bool showImageSelectionModal = false;
     private TemplateImage? selectedTemplateForScript;
     private bool showCaptureTemplateModal = false;
-    private bool isCapturingTemplate = false;
     private string newTemplateName = string.Empty;
     private byte[]? capturedTemplateData;
     private System.Drawing.Rectangle capturedRegion;
@@ -2040,7 +2039,7 @@
         try
         {
             currentConditionForTemplate = condition;
-            isCapturingTemplate = true;
+            showCaptureTemplateModal = true;
             StateHasChanged();
 
             // Select region on desktop
@@ -2060,7 +2059,6 @@
                     capturedTemplateData = screenshot;
                     capturedRegion = rect;
                     newTemplateName = $"Template_{DateTime.Now:yyyyMMdd_HHmmss}";
-                    showCaptureTemplateModal = true;
                 }
                 else
                 {
@@ -2079,7 +2077,7 @@
         }
         finally
         {
-            isCapturingTemplate = false;
+            showCaptureTemplateModal = false;
             StateHasChanged();
         }
     }

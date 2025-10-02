@@ -562,6 +562,13 @@ namespace AutomationTool.Services
                 }
 
                 var screenData = await _screenshotService.CaptureFullScreenAsync();
+
+                if (templateImage.ImageData == null || templateImage.ImageData.Length == 0)
+                {
+                    LogExecution(state.ScriptId, string.Empty, Models.LogLevel.Warning, $"Template image {templateImageId} has no image data");
+                    return false;
+                }
+
                 var result = await _imageRecognition.FindImageAsync(screenData, templateImage.ImageData, threshold);
 
                 LogExecution(state.ScriptId, string.Empty, Models.LogLevel.Debug, 
@@ -576,12 +583,12 @@ namespace AutomationTool.Services
             }
         }
 
-        private async Task<bool> EvaluateTimeoutConditionAsync(ScriptCondition condition, ScriptExecutionState state, CancellationToken cancellationToken)
+        private Task<bool> EvaluateTimeoutConditionAsync(ScriptCondition condition, ScriptExecutionState state, CancellationToken cancellationToken)
         {
             var timeoutMs = GetParameterValue<int>(condition.Parameters, "timeoutMs", 5000);
             var elapsedMs = (DateTime.Now - state.StartTime).TotalMilliseconds;
-            
-            return elapsedMs >= timeoutMs;
+
+            return Task.FromResult(elapsedMs >= timeoutMs);
         }
 
         private async Task<StepExecutionResult> ExecuteActionStepAsync(ScriptStep step, ScriptExecutionState state, CancellationToken cancellationToken)
@@ -670,7 +677,7 @@ namespace AutomationTool.Services
         {
             var text = GetParameterValue<string>(action.Parameters, "text", string.Empty);
             
-            await _automationEngine.TypeTextAsync(text);
+            await _automationEngine.TypeTextAsync(text!);
             LogExecution(state.ScriptId, string.Empty, Models.LogLevel.Info, $"Typed text: {text}");
         }
 
@@ -678,7 +685,7 @@ namespace AutomationTool.Services
         {
             var keys = GetParameterValue<string>(action.Parameters, "keys", string.Empty);
             
-            await _automationEngine.SendKeysAsync(keys);
+            await _automationEngine.SendKeysAsync(keys!);
             LogExecution(state.ScriptId, string.Empty, Models.LogLevel.Info, $"Sent keys: {keys}");
         }
 
@@ -695,7 +702,7 @@ namespace AutomationTool.Services
             var fileName = GetParameterValue<string>(action.Parameters, "fileName", $"script_screenshot_{DateTime.Now:yyyyMMdd_HHmmss}");
             
             var screenData = await _screenshotService.CaptureFullScreenAsync();
-            var filePath = await _screenshotService.SaveScreenshotAsync(screenData, fileName);
+            var filePath = await _screenshotService.SaveScreenshotAsync(screenData, fileName!);
             
             LogExecution(state.ScriptId, string.Empty, Models.LogLevel.Info, $"Screenshot saved: {filePath}");
         }
@@ -708,21 +715,23 @@ namespace AutomationTool.Services
             return new StepExecutionResult { Success = true };
         }
 
-        private async Task<StepExecutionResult> ExecuteJumpStepAsync(ScriptStep step, ScriptExecutionState state, CancellationToken cancellationToken)
+        private Task<StepExecutionResult> ExecuteJumpStepAsync(ScriptStep step, ScriptExecutionState state, CancellationToken cancellationToken)
         {
             var targetStepId = GetParameterValue<string>(step.Parameters, "targetStepId", string.Empty);
             
-            return new StepExecutionResult 
-            { 
-                Success = true, 
-                NextStepId = targetStepId 
-            };
+            return Task.FromResult(new StepExecutionResult
+            {
+                Success = true,
+                NextStepId = targetStepId
+            });
         }
 
-        private T GetParameterValue<T>(Dictionary<string, object> parameters, string key, T defaultValue = default(T)!)
+        private T? GetParameterValue<T>(Dictionary<string, object> parameters, string key, T? defaultValue = default)
         {
             if (!parameters.TryGetValue(key, out var value) || value == null)
+            {
                 return defaultValue;
+            }
 
             // Handle JsonElement case (when deserializing from JSON)
             if (value is System.Text.Json.JsonElement jsonElement)
@@ -730,13 +739,13 @@ namespace AutomationTool.Services
                 try
                 {
                     if (typeof(T) == typeof(string))
-                        return (T)(object)jsonElement.GetString();
+                        return (T?)(object?)jsonElement.GetString();
                     if (typeof(T) == typeof(int))
-                        return (T)(object)jsonElement.GetInt32();
+                        return (T?)(object?)jsonElement.GetInt32();
                     if (typeof(T) == typeof(double))
-                        return (T)(object)jsonElement.GetDouble();
+                        return (T?)(object?)jsonElement.GetDouble();
                     if (typeof(T) == typeof(bool))
-                        return (T)(object)jsonElement.GetBoolean();
+                        return (T?)(object?)jsonElement.GetBoolean();
                 }
                 catch
                 {
@@ -747,7 +756,12 @@ namespace AutomationTool.Services
             // Handle direct conversion
             try
             {
-                return (T)Convert.ChangeType(value, typeof(T));
+                if (typeof(T).IsEnum)
+                {
+                    return (T?)Enum.Parse(typeof(T), value.ToString() ?? string.Empty, ignoreCase: true);
+                }
+
+                return (T?)Convert.ChangeType(value, Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T));
             }
             catch
             {
